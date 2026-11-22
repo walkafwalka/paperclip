@@ -7,6 +7,13 @@ import { deduplicateToolDescriptors, ToolGatewayHttpError, type ToolGatewayDescr
 type WorkMode = "standard" | "planning" | "ask" | "skill_test";
 type ToolDefinition = Record<string, unknown>;
 
+/**
+ * Paperclip Runner refuses a provider tool contract whose description exceeds
+ * this size (`MAX_DESCRIPTION_BYTES` in the runner's provider bridge), and one
+ * refused tool fails the whole session. Such a tool is still reachable through
+ * search and call, where its description is result data, not a contract.
+ */
+export const RUNNER_TOOL_DESCRIPTION_MAX_BYTES = 16 * 1024;
 const SEARCH_TOOL = "paperclip_search_assigned_tools";
 const CALL_TOOL = "paperclip_call_assigned_tool";
 // A single valid runner schema can be 512 KiB. Leave room for its description
@@ -419,7 +426,8 @@ export async function createAssignedMcpTools(input: {
   const assigned = {
     definitions(fits?: (definitions: ToolDefinition[]) => boolean): ToolDefinition[] {
       const direct = [...((input.workMode ?? "standard") === "standard" ? catalog.definitions : catalog.readDefinitions)] as ToolDefinition[];
-      if (input.delivery !== "on_demand" && unchecked.length === 0 && (!fits || fits(direct))) return direct;
+      const describable = direct.every(tool => Buffer.byteLength(String(tool.description ?? ""), "utf8") <= RUNNER_TOOL_DESCRIPTION_MAX_BYTES);
+      if (input.delivery !== "on_demand" && unchecked.length === 0 && describable && (!fits || fits(direct))) return direct;
       const compact = structuredClone(ON_DEMAND_TOOLS);
       if (fits && !fits(compact)) throw new Error("assigned_mcp_tool_catalog_capacity_exceeded");
       return compact;
