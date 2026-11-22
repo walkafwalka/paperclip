@@ -230,6 +230,8 @@ describe("Claude subscription renewal through the managed runtime", () => {
 });
 
 describe("Claude subscription full run scope and idle renewal", () => {
+  const enableFullScope = () => vi.stubEnv("PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE", "full");
+  afterEach(() => vi.stubEnv("PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE", ""));
   const broadScopes = ["user:profile", "user:inference", "user:mcp_servers"];
   const broad = (expiresAt: number, extra: Record<string, unknown> = {}) => {
     const login = JSON.parse(document(expiresAt));
@@ -244,6 +246,7 @@ describe("Claude subscription full run scope and idle renewal", () => {
   };
 
   it("delivers the broad token with declared scopes and the Chrome switch only on an explicit full-scope connection", async () => {
+    enableFullScope();
     const { account, owner, row, service } = await connect(broad(Date.now() + 28800_000), "full");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network"));
     const prepare = (config: Record<string, unknown>) => prepareManagedAiRuntime(db, { companyId, agentId, responsibleUserId: owner, adapterType: "paperclip_runner",
@@ -276,6 +279,7 @@ describe("Claude subscription full run scope and idle renewal", () => {
   });
 
   it("saves the run scope and sign-in end beside the connection and keeps the scope across a reconnect", async () => {
+    enableFullScope();
     const ends = Date.now() + 20 * 86400_000;
     const { account, owner, service } = await connect(broad(Date.now() + 28800_000, { refreshTokenExpiresAt: ends }), "full");
     const read = async () => (await db.select().from(toolConnections).where(eq(toolConnections.id, account.connectionId)))[0]!.config;
@@ -292,7 +296,27 @@ describe("Claude subscription full run scope and idle renewal", () => {
       .rejects.toThrow("Run scope applies only");
   });
 
+  it("refuses full scope, and narrows a saved full-scope connection, unless the instance operator enabled it", async () => {
+    await expect(connect(broad(Date.now() + 28800_000), "full")).rejects.toThrow("Full run scope is not enabled on this instance");
+    enableFullScope();
+    const { account, owner, row, service } = await connect(broad(Date.now() + 28800_000));
+    // On an enabled instance a new sign-in takes the instance default.
+    expect((await service.list(companyId, owner)).find(entry => entry.id === account.connectionId)).toMatchObject({ claudeRunScope: "full" });
+    vi.stubEnv("PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE", "");
+    expect((await service.list(companyId, owner)).find(entry => entry.id === account.connectionId)).not.toHaveProperty("claudeRunScope");
+    const exchange = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ access_token: "inference-access", refresh_token: "rotated", expires_in: 28800, scope: "user:inference" })));
+    const run = await prepareManagedAiRuntime(db, { companyId, agentId, responsibleUserId: owner, adapterType: "paperclip_runner",
+      binding: binding(account), config: { provider: "acpx", acpxAgent: "claude", chrome: true, env: {} } });
+    try {
+      expect(JSON.parse(exchange.mock.calls[0]![1]!.body as string).scope).toBe("user:inference");
+      expect(run.config.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("inference-access");
+      expect(run.configuredEnvironment).toEqual({});
+      expect(JSON.parse(await service.credentialRaw(row)).claudeAiOauth.scopes).toEqual(["user:inference"]);
+    } finally { await run.cleanup(); }
+  });
+
   it.each(["inference", "full"] as const)("defers an early renewal while another run holds the token (%s)", async runScope => {
+    if (runScope === "full") enableFullScope();
     const value = runScope === "full" ? broad(Date.now() + 3600_000) : document(Date.now() + 3600_000);
     const { service, row, state, account } = await connect(value, runScope);
     const exchange = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ access_token: "renewed", refresh_token: "rotated", expires_in: 28800 })));

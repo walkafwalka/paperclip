@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { claudeAccessTokenOf, claudeConnectionRunScope, claudeRefreshDue, claudeRunScopesOf, claudeScopesAllowRun, claudeSignInEndsAt, parseStoredClaudeOauth, refreshClaudeOauth, serializeClaudeOauth } from "../services/claude-oauth-credential.js";
+import { claudeAccessTokenOf, claudeConnectionRunScope, claudeInstanceRunScope, claudeRefreshDue, claudeRunScopesOf, claudeScopesAllowRun, claudeSignInEndsAt, parseStoredClaudeOauth, refreshClaudeOauth, serializeClaudeOauth } from "../services/claude-oauth-credential.js";
 
 const now = 1_800_000_000_000;
 const stored = { accessToken: "old-access", refreshToken: "old-refresh", expiresAt: now + 28800_000, scopes: ["user:inference"], subscriptionType: "max" };
@@ -27,10 +27,16 @@ describe("Claude OAuth credential", () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ access_token: "private-token", expires_in })));
     await expect(refreshClaudeOauth(stored, { fetchImpl })).rejects.toThrow("unexpected response");
   });
-  it("treats only an explicit full run scope as full", () => {
-    expect(claudeConnectionRunScope({ aiClaudeRunScope: "full" })).toBe("full");
+  it("treats a connection as full scope only when it chose that and the instance operator enabled it", () => {
+    const enabled = { PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE: " Full " };
+    expect(claudeInstanceRunScope(enabled)).toBe("full");
+    expect(claudeConnectionRunScope({ aiClaudeRunScope: "full" }, enabled)).toBe("full");
     for (const config of [undefined, null, {}, { aiClaudeRunScope: "inference" }, { aiClaudeRunScope: true }, { ai: { aiClaudeRunScope: "full" } }]) {
-      expect(claudeConnectionRunScope(config)).toBe("inference");
+      expect(claudeConnectionRunScope(config, enabled)).toBe("inference");
+    }
+    for (const env of [{}, { PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE: "" }, { PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE: "true" }, { PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE: "inference" }]) {
+      expect(claudeInstanceRunScope(env)).toBe("inference");
+      expect(claudeConnectionRunScope({ aiClaudeRunScope: "full" }, env)).toBe("inference");
     }
   });
   it("delivers a broad login only to a full-scope connection and declares its scopes", () => {

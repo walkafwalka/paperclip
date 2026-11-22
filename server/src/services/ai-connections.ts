@@ -1,4 +1,4 @@
-import { claudeAccessTokenOf, claudeConnectionRunScope, claudeSignInEndsAt } from "./claude-oauth-credential.js";
+import { CLAUDE_RUN_SCOPE_ENV, claudeAccessTokenOf, claudeConnectionRunScope, claudeInstanceRunScope, claudeSignInEndsAt } from "./claude-oauth-credential.js";
 import { refreshClaudeSubscription } from "./claude-subscription-refresh.js";
 import { notifyLoginSessionChanged } from "./login-cleanup-notifications.js";
 import type { ConnectionManagementContext } from "./connection-management.js";
@@ -649,12 +649,16 @@ export function aiConnectionService(db: Db) {
     const claudeSubscription = input.provider === "anthropic" && input.method === "subscription";
     const claudeRunScope = "claudeRunScope" in input ? input.claudeRunScope : undefined;
     if (claudeRunScope && !claudeSubscription) throw unprocessable("Run scope applies only to a Claude subscription sign-in");
+    if (claudeRunScope === "full" && claudeInstanceRunScope() !== "full")
+      throw unprocessable(`Full run scope is not enabled on this instance. The operator enables it with ${CLAUDE_RUN_SCOPE_ENV}=full.`);
     // Sibling keys of `ai`: the owner's explicit run scope, and the non-secret
     // end of the sign-in so lists can show it without reading the credential.
-    const claudeConfig = (existing: Record<string, unknown> = {}) => {
-      if (!claudeSubscription) return existing;
-      const { aiClaudeRunScope: savedScope, aiSignInEndsAt: _ended, ...rest } = existing;
-      const scope = claudeRunScope ?? (savedScope === "full" ? "full" : "inference");
+    const claudeConfig = (existing?: Record<string, unknown>) => {
+      if (!claudeSubscription) return existing ?? {};
+      const { aiClaudeRunScope: savedScope, aiSignInEndsAt: _ended, ...rest } = existing ?? {};
+      // A reconnect keeps the connection's saved choice. A new connection takes
+      // the instance default, which is `full` only where the operator set it.
+      const scope = claudeRunScope ?? (existing ? (savedScope === "full" ? "full" : "inference") : claudeInstanceRunScope());
       const endsAt = claudeSignInEndsAt(verifiedCredential);
       return { ...rest, ...(scope === "full" ? { aiClaudeRunScope: "full" } : {}), ...(endsAt ? { aiSignInEndsAt: new Date(endsAt).toISOString() } : {}) };
     };

@@ -20,9 +20,26 @@ const REFRESH_TIMEOUT_MS = 60_000;
  */
 export type ClaudeRunScope = "inference" | "full";
 
-/** The run scope saved on a connection's config. Anything but an explicit `full` is `inference`. */
-export function claudeConnectionRunScope(config: unknown): ClaudeRunScope {
-  return config && typeof config === "object" && (config as Record<string, unknown>).aiClaudeRunScope === "full" ? "full" : "inference";
+/** The instance operator's setting, read from the server environment at start. */
+export const CLAUDE_RUN_SCOPE_ENV = "PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE";
+
+/**
+ * Full run scope exists only on an instance whose operator set
+ * PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE=full. There it is also the default
+ * for new Claude subscription sign-ins. Anything else is `inference`.
+ */
+export function claudeInstanceRunScope(env: NodeJS.ProcessEnv = process.env): ClaudeRunScope {
+  return env[CLAUDE_RUN_SCOPE_ENV]?.trim().toLowerCase() === "full" ? "full" : "inference";
+}
+
+/**
+ * The run scope in effect for a connection: `full` only when the connection
+ * saved that choice and the instance still allows it. An operator who removes
+ * the setting returns every connection to the inference-only default.
+ */
+export function claudeConnectionRunScope(config: unknown, env: NodeJS.ProcessEnv = process.env): ClaudeRunScope {
+  return claudeInstanceRunScope(env) === "full" && config && typeof config === "object"
+    && (config as Record<string, unknown>).aiClaudeRunScope === "full" ? "full" : "inference";
 }
 
 export interface StoredClaudeOauth {

@@ -188,11 +188,18 @@ with still fails with an authentication error and can be retried.
 ### Full run scope (opt-in)
 
 By default a Claude subscription run receives a token narrowed to
-`user:inference`, as described above. The connection owner can instead choose
-full run scope when signing in or reconnecting, by sending
-`claudeRunScope: "full"` with the local sign-in intent. The choice is saved on
-the connection as `aiClaudeRunScope` and is retained by later reconnects until
-the owner sends `claudeRunScope: "inference"`. No existing connection changes.
+`user:inference`, as described above. Full run scope is an instance setting: the
+operator starts the server with `PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE=full`.
+Without it the option does not exist; a request for it is refused and every
+connection is narrowed.
+
+On an instance with the setting, a new Claude subscription sign-in is saved with
+full run scope (`aiClaudeRunScope` on the connection) unless the sign-in intent
+sends `claudeRunScope: "inference"`. A reconnect keeps the connection's saved
+choice unless the intent sends one. Connections created before the setting keep
+inference scope until their owner reconnects with `claudeRunScope: "full"`. If
+the operator later removes the setting, full-scope connections are narrowed at
+their next renewal and need a new sign-in to become full again.
 
 A full-scope connection is renewed with the scopes granted at sign-in and is
 never narrowed. Its runs still receive only the access token through
