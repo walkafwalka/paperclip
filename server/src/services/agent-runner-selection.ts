@@ -160,7 +160,7 @@ function resolveClaudeRunnerConfig(config: Record<string, unknown>): Record<stri
   const effort = config.modelReasoningEffort ?? config.reasoningEffort ?? config.effort;
   if (config.model !== undefined && typeof config.model !== "string") unsupported.push("model");
   if (unsupported.length) incompatible(unsupported);
-  for (const key of ["engine", "command", "mode", "acpMode", "nonInteractivePermissions", "acpNonInteractivePermissions", "dangerouslySkipPermissions", "chrome", "maxTurnsPerRun", "effort", "reasoningEffort"]) delete translated[key];
+  for (const key of ["engine", "command", "mode", "acpMode", "nonInteractivePermissions", "acpNonInteractivePermissions", "dangerouslySkipPermissions", "maxTurnsPerRun", "effort", "reasoningEffort"]) delete translated[key];
   const env = config.env && typeof config.env === "object" ? config.env as Record<string, unknown> : {};
   const modelEnv = { ...env };
   if (!(typeof config.model === "string" && config.model.trim())) {

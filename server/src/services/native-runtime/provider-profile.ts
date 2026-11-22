@@ -435,7 +435,7 @@ export function assertAgentCoreProfileRecoveryBinding(input: {
 
 export function claudeRunnerUnsupportedSettings(config: Record<string, unknown>): string[] {
   config = normalizeClaudeRunnerOptions(config).config;
-  const unsupported = ["chrome", "agentCommand", "acpAgentCommand", "stateDir", "acpStateDir", "warmHandleIdleMs", "acpWarmHandleIdleMs", "extraArgs", "args", "filesystemScope", "filesystemExtraPaths", "filesystemSandboxCommand", "networkScope", "networkAllowlist", "maxTurnsPerRun", "permissionMode", "acpPermissionMode"]
+  const unsupported = ["agentCommand", "acpAgentCommand", "stateDir", "acpStateDir", "warmHandleIdleMs", "acpWarmHandleIdleMs", "extraArgs", "args", "filesystemScope", "filesystemExtraPaths", "filesystemSandboxCommand", "networkScope", "networkAllowlist", "maxTurnsPerRun", "permissionMode", "acpPermissionMode"]
     .filter(key => config[key] !== undefined && config[key] !== false && config[key] !== "" && config[key] !== 0 && !(Array.isArray(config[key]) && config[key].length === 0));
   if (config.command && config.command !== "claude") unsupported.push("command");
   if (config.mode && config.mode !== "persistent") unsupported.push("mode");
