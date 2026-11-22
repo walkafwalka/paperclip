@@ -13,6 +13,7 @@ import { aiConnectionService } from "../services/ai-connections.js";
 import { prepareManagedAiRuntime } from "../services/ai-connection-runtime.js";
 import * as secretModule from "../services/secrets.js";
 import { secretService } from "../services/secrets.js";
+import { instanceSettingsService } from "../services/instance-settings.js";
 
 vi.mock("../services/subscription-refresh.js", () => ({ refreshSubscriptionConnection: vi.fn() }));
 let database: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
@@ -34,11 +35,11 @@ beforeAll(async () => {
 }, 90000);
 afterEach(() => vi.restoreAllMocks());
 afterAll(async () => { await database?.cleanup(); vi.unstubAllEnvs(); if (home) await rm(home, { recursive: true, force: true }); });
-async function connect(value: string, claudeRunScope?: "inference" | "full") {
+async function connect(value: string) {
   const owner = randomUUID();
   const service = aiConnectionService(db);
   await db.insert(companyMemberships).values({ companyId, principalId: owner, principalType: "user", status: "active", membershipRole: "member" });
-  const account = await service.save(companyId, owner, { provider: "anthropic", method: "subscription", ownership: "personal", name: owner, loginSessionId: "fixture", allAgents: true, agentIds: [], ...(claudeRunScope ? { claudeRunScope } : {}) } as Parameters<typeof service.save>[2], value);
+  const account = await service.save(companyId, owner, { provider: "anthropic", method: "subscription", ownership: "personal", name: owner, loginSessionId: "fixture", allAgents: true, agentIds: [] }, value);
   const [connection] = await db.select().from(toolConnections).where(eq(toolConnections.id, account.connectionId));
   const [grant] = await db.select().from(connectionGrants).where(eq(connectionGrants.id, account.grantId));
   const secretId = grant!.credentialSecretRefs.find(ref => ref.configPath === "ai.credential")!.secretId;
@@ -230,8 +231,8 @@ describe("Claude subscription renewal through the managed runtime", () => {
 });
 
 describe("Claude subscription full run scope and idle renewal", () => {
-  const enableFullScope = () => vi.stubEnv("PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE", "full");
-  afterEach(() => vi.stubEnv("PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE", ""));
+  const setFullScope = (enabled: boolean) => instanceSettingsService(db).updateExperimental({ enableClaudeFullRunScope: enabled });
+  afterEach(() => setFullScope(false));
   const broadScopes = ["user:profile", "user:inference", "user:mcp_servers"];
   const broad = (expiresAt: number, extra: Record<string, unknown> = {}) => {
     const login = JSON.parse(document(expiresAt));
@@ -245,9 +246,9 @@ describe("Claude subscription full run scope and idle renewal", () => {
     return id;
   };
 
-  it("delivers the broad token with declared scopes and the Chrome switch only on an explicit full-scope connection", async () => {
-    enableFullScope();
-    const { account, owner, row, service } = await connect(broad(Date.now() + 28800_000), "full");
+  it("delivers the broad token with declared scopes and the Chrome switch while the instance setting is on", async () => {
+    await setFullScope(true);
+    const { account, owner, row, service } = await connect(broad(Date.now() + 28800_000));
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network"));
     const prepare = (config: Record<string, unknown>) => prepareManagedAiRuntime(db, { companyId, agentId, responsibleUserId: owner, adapterType: "paperclip_runner",
       binding: binding(account), config: { provider: "acpx", acpxAgent: "claude", ...config } });
@@ -267,7 +268,7 @@ describe("Claude subscription full run scope and idle renewal", () => {
     } finally { await plain.cleanup(); await chrome.cleanup(); }
   });
 
-  it("keeps the default inference-only delivery when the connection did not opt in, even with chrome set", async () => {
+  it("keeps the default inference-only delivery while the instance setting is off, even with chrome set", async () => {
     const { account, owner } = await connect(document(Date.now() + 28800_000));
     const run = await prepareManagedAiRuntime(db, { companyId, agentId, responsibleUserId: owner, adapterType: "paperclip_runner",
       binding: binding(account), config: { provider: "acpx", acpxAgent: "claude", chrome: true, env: {} } });
@@ -278,32 +279,23 @@ describe("Claude subscription full run scope and idle renewal", () => {
     } finally { await run.cleanup(); }
   });
 
-  it("saves the run scope and sign-in end beside the connection and keeps the scope across a reconnect", async () => {
-    enableFullScope();
+  it("saves the sign-in end beside the connection and updates it on reconnect", async () => {
     const ends = Date.now() + 20 * 86400_000;
-    const { account, owner, service } = await connect(broad(Date.now() + 28800_000, { refreshTokenExpiresAt: ends }), "full");
+    const { account, owner, service } = await connect(broad(Date.now() + 28800_000, { refreshTokenExpiresAt: ends }));
     const read = async () => (await db.select().from(toolConnections).where(eq(toolConnections.id, account.connectionId)))[0]!.config;
-    expect(await read()).toMatchObject({ aiClaudeRunScope: "full", aiSignInEndsAt: new Date(ends).toISOString(), ai: { provider: "anthropic", method: "subscription" } });
-    const listed = (await service.list(companyId, owner)).find(entry => entry.id === account.connectionId)!;
-    expect(listed).toMatchObject({ status: "connected", claudeRunScope: "full", signInEndsAt: new Date(ends).toISOString() });
-    const reconnect = { provider: "anthropic", method: "subscription", ownership: "personal", name: owner, loginSessionId: "fixture", allAgents: true, agentIds: [], connectionId: account.connectionId };
-    await service.save(companyId, owner, reconnect as Parameters<typeof service.save>[2], broad(Date.now() + 28800_000, { refreshTokenExpiresAt: ends + 86400_000 }));
-    expect(await read()).toMatchObject({ aiClaudeRunScope: "full", aiSignInEndsAt: new Date(ends + 86400_000).toISOString() });
-    await service.save(companyId, owner, { ...reconnect, claudeRunScope: "inference" } as Parameters<typeof service.save>[2], document(Date.now() + 28800_000));
-    expect(await read()).not.toHaveProperty("aiClaudeRunScope");
+    expect(await read()).toMatchObject({ aiSignInEndsAt: new Date(ends).toISOString(), ai: { provider: "anthropic", method: "subscription" } });
+    expect((await service.list(companyId, owner)).find(entry => entry.id === account.connectionId)).toMatchObject({ status: "connected", signInEndsAt: new Date(ends).toISOString() });
+    const reconnect = { provider: "anthropic" as const, method: "subscription" as const, ownership: "personal" as const, name: owner, loginSessionId: "fixture", allAgents: true, agentIds: [], connectionId: account.connectionId };
+    await service.save(companyId, owner, reconnect, broad(Date.now() + 28800_000, { refreshTokenExpiresAt: ends + 86400_000 }));
+    expect(await read()).toMatchObject({ aiSignInEndsAt: new Date(ends + 86400_000).toISOString() });
+    await service.save(companyId, owner, reconnect, "legacy-token");
     expect(await read()).not.toHaveProperty("aiSignInEndsAt");
-    await expect(service.save(companyId, owner, { provider: "openai", method: "subscription", ownership: "personal", name: "x", loginSessionId: "fixture", allAgents: true, agentIds: [], claudeRunScope: "full" } as Parameters<typeof service.save>[2], "{}"))
-      .rejects.toThrow("Run scope applies only");
   });
 
-  it("refuses full scope, and narrows a saved full-scope connection, unless the instance operator enabled it", async () => {
-    await expect(connect(broad(Date.now() + 28800_000), "full")).rejects.toThrow("Full run scope is not enabled on this instance");
-    enableFullScope();
+  it("narrows a broad login once the instance setting is turned off", async () => {
+    await setFullScope(true);
     const { account, owner, row, service } = await connect(broad(Date.now() + 28800_000));
-    // On an enabled instance a new sign-in takes the instance default.
-    expect((await service.list(companyId, owner)).find(entry => entry.id === account.connectionId)).toMatchObject({ claudeRunScope: "full" });
-    vi.stubEnv("PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE", "");
-    expect((await service.list(companyId, owner)).find(entry => entry.id === account.connectionId)).not.toHaveProperty("claudeRunScope");
+    await setFullScope(false);
     const exchange = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ access_token: "inference-access", refresh_token: "rotated", expires_in: 28800, scope: "user:inference" })));
     const run = await prepareManagedAiRuntime(db, { companyId, agentId, responsibleUserId: owner, adapterType: "paperclip_runner",
       binding: binding(account), config: { provider: "acpx", acpxAgent: "claude", chrome: true, env: {} } });
@@ -315,10 +307,29 @@ describe("Claude subscription full run scope and idle renewal", () => {
     } finally { await run.cleanup(); }
   });
 
+  it("renews instead of requesting sign-in when a run's access token is rejected, and requests sign-in only if renewal is refused", async () => {
+    const { account, owner, row, service } = await connect(document(Date.now() + 3600_000));
+    const run = await prepareManagedAiRuntime(db, { companyId, agentId, responsibleUserId: owner, adapterType: "claude_local", binding: binding(account), config: { env: {} } });
+    const failed = { companyId, runStartedAt: new Date(Date.now() + 1000), attribution: { ...run.attribution, identity: run.identity } };
+    await run.cleanup();
+    await service.markAuthenticationFailed(failed);
+    const status = async () => (await db.select().from(connectionGrants).where(eq(connectionGrants.id, account.grantId)))[0]!.status;
+    expect(await status()).toBe("active");
+    expect(JSON.parse(await service.credentialRaw(row)).claudeAiOauth.expiresAt).toBe(0);
+    const exchange = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ access_token: "renewed", refresh_token: "rotated", expires_in: 28800 })));
+    expect(await service.credential(row)).toBe("renewed");
+    expect(exchange).toHaveBeenCalledOnce();
+    // The same failure on a login the provider no longer renews does request sign-in.
+    await service.markAuthenticationFailed({ ...failed, attribution: { ...failed.attribution, identity: failed.attribution.identity.replace(/[^:]+$/, createHash("sha256").update("renewed").digest("hex").slice(0, 16)) } });
+    exchange.mockImplementation(async () => new Response("refused", { status: 400 }));
+    await expect(service.credential(row)).rejects.toMatchObject({ details: { code: "ai_connection_unavailable" } });
+    expect(await status()).toBe("needs_reauthorization");
+  });
+
   it.each(["inference", "full"] as const)("defers an early renewal while another run holds the token (%s)", async runScope => {
-    if (runScope === "full") enableFullScope();
+    if (runScope === "full") await setFullScope(true);
     const value = runScope === "full" ? broad(Date.now() + 3600_000) : document(Date.now() + 3600_000);
-    const { service, row, state, account } = await connect(value, runScope);
+    const { service, row, state, account } = await connect(value);
     const exchange = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ access_token: "renewed", refresh_token: "rotated", expires_in: 28800 })));
     const other = await holdingRun(account.grantId);
     await holdingRun(account.grantId, "queued");

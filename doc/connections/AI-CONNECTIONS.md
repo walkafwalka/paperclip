@@ -183,26 +183,26 @@ no other run holds the token, both when a run starts and when a run's runtime is
 cleaned up, so a busy connection is renewed in the gap after its last run ends.
 Once less than five minutes remain, renewal no longer waits; the other runs would
 lose the token at expiry either way. A run that outlasts the token it started
-with still fails with an authentication error and can be retried.
+with fails with an authentication error and can be retried. That failure does
+not request sign-in: the stored token is marked spent, the next use renews it,
+and only the provider refusing the renewal marks the connection for sign-in.
 
 ### Full run scope (opt-in)
 
 By default a Claude subscription run receives a token narrowed to
-`user:inference`, as described above. Full run scope is an instance setting: the
-operator starts the server with `PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE=full`.
-Without it the option does not exist; a request for it is refused and every
-connection is narrowed.
+`user:inference`, as described above. Full run scope is an instance setting,
+**Claude subscription full run scope** under Settings → Experimental
+(`enableClaudeFullRunScope`), off by default. There is no per-connection choice.
 
-On an instance with the setting, a new Claude subscription sign-in is saved with
-full run scope (`aiClaudeRunScope` on the connection) unless the sign-in intent
-sends `claudeRunScope: "inference"`. A reconnect keeps the connection's saved
-choice unless the intent sends one. Connections created before the setting keep
-inference scope until their owner reconnects with `claudeRunScope: "full"`. If
-the operator later removes the setting, full-scope connections are narrowed at
-their next renewal and need a new sign-in to become full again.
+Turning it on changes delivery from the next run: a login that still holds the
+scopes of its sign-in is delivered and renewed with them. A login that was
+already narrowed stays inference-only until its owner uses Reconnect, so turn
+the setting on first and then sign in or reconnect. Turning it off narrows each
+login at its next renewal; turning it on again needs a Reconnect. Runs already
+in progress keep the token they started with either way.
 
-A full-scope connection is renewed with the scopes granted at sign-in and is
-never narrowed. Its runs still receive only the access token through
+With the setting on, a login is renewed with the scopes granted at sign-in and
+is never narrowed. Its runs still receive only the access token through
 `CLAUDE_CODE_OAUTH_TOKEN`; the refresh token never leaves the vault and no
 credential file is written to the run's home. Because Claude Code treats a token
 from the environment as inference-only, the server declares the token's scopes
@@ -211,16 +211,16 @@ beside it in `CLAUDE_CODE_OAUTH_SCOPES`. It also sets
 variable, so the account's own claude.ai connectors are not loaded into agents.
 
 Claude in Chrome requires a claude.ai login with `user:profile`; Claude Code
-keeps it off for API keys and inference-only tokens. With a full-scope
-connection, an agent whose configuration sets `chrome: true` is started with
-`CLAUDE_CODE_ENABLE_CFC=1`. On any
-other connection `chrome` has no effect on Paperclip Runner.
+keeps it off for API keys and inference-only tokens. With the setting on, an
+agent whose configuration sets `chrome: true` is started with
+`CLAUDE_CODE_ENABLE_CFC=1`. With the setting off `chrome` has no effect on
+Paperclip Runner.
 
-Security: the access token of a full-scope connection carries every scope of the
+Security: with the setting on, the access token carries every scope of the
 owner's claude.ai sign-in for up to its eight-hour lifetime, and it is present in
 the environment of the agent process. An agent, or anything that can read that
 process's environment, can use it for those scopes until it is renewed or
-expires. Choose full scope only for agents trusted with the account. The
+expires. Turn the setting on only where agents are trusted with the account. The
 refresh token is not exposed, so the exposure ends with the access token.
 
 ### Sign-in end

@@ -214,8 +214,8 @@ The runner requires the provider to acknowledge it before prompting and on resum
 An ignored setting or unavailable model fails admission; no runner fallback occurs.
 Custom commands/state paths, warm-process controls,
 confinement settings and turn limits require an explicit Legacy choice.
-Chrome integration (`chrome: true`) takes effect only with a Claude subscription
-connection whose owner chose full run scope; see
+Chrome integration (`chrome: true`) takes effect only for a Claude subscription
+connection while the instance setting for full run scope is on; see
 [AI connections](connections/AI-CONNECTIONS.md#full-run-scope-opt-in). Native
 forms omit Legacy-only defaults. Native permissions keep their saved policy.
 

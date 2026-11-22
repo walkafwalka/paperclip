@@ -1,4 +1,4 @@
-import { CLAUDE_RUN_SCOPE_ENV, claudeAccessTokenOf, claudeConnectionRunScope, claudeInstanceRunScope, claudeSignInEndsAt } from "./claude-oauth-credential.js";
+import { claudeAccessTokenOf, claudeSignInEndsAt, parseStoredClaudeOauth } from "./claude-oauth-credential.js";
 import { refreshClaudeSubscription } from "./claude-subscription-refresh.js";
 import { notifyLoginSessionChanged } from "./login-cleanup-notifications.js";
 import type { ConnectionManagementContext } from "./connection-management.js";
@@ -156,10 +156,8 @@ export function aiConnectionService(db: Db) {
           name: connection.name,
           accountLabel: grant.providerTenant?.name,
           ...(needsReconnect ? { unavailableReason: "Reconnect with a separate sign-in to protect your existing terminal login." } : {}),
-          ...(metadata.data.provider === "anthropic" && metadata.data.method === "subscription" ? {
-            ...(claudeConnectionRunScope(connection.config) === "full" ? { claudeRunScope: "full" as const } : {}),
-            ...(typeof connection.config.aiSignInEndsAt === "string" ? { signInEndsAt: connection.config.aiSignInEndsAt } : {}),
-          } : {}),
+          ...(metadata.data.provider === "anthropic" && metadata.data.method === "subscription" && typeof connection.config.aiSignInEndsAt === "string"
+            ? { signInEndsAt: connection.config.aiSignInEndsAt } : {}),
           ownership:
             grant.kind === "user" ? ("personal" as const) : ("shared" as const),
           ownerUserId: grant.subjectUserId ?? undefined,
@@ -646,21 +644,13 @@ export function aiConnectionService(db: Db) {
   ) {
     await managementContext?.reauthorize();
     const routing = "routing" in input ? input.routing : undefined;
-    const claudeSubscription = input.provider === "anthropic" && input.method === "subscription";
-    const claudeRunScope = "claudeRunScope" in input ? input.claudeRunScope : undefined;
-    if (claudeRunScope && !claudeSubscription) throw unprocessable("Run scope applies only to a Claude subscription sign-in");
-    if (claudeRunScope === "full" && claudeInstanceRunScope() !== "full")
-      throw unprocessable(`Full run scope is not enabled on this instance. The operator enables it with ${CLAUDE_RUN_SCOPE_ENV}=full.`);
-    // Sibling keys of `ai`: the owner's explicit run scope, and the non-secret
-    // end of the sign-in so lists can show it without reading the credential.
-    const claudeConfig = (existing?: Record<string, unknown>) => {
-      if (!claudeSubscription) return existing ?? {};
-      const { aiClaudeRunScope: savedScope, aiSignInEndsAt: _ended, ...rest } = existing ?? {};
-      // A reconnect keeps the connection's saved choice. A new connection takes
-      // the instance default, which is `full` only where the operator set it.
-      const scope = claudeRunScope ?? (existing ? (savedScope === "full" ? "full" : "inference") : claudeInstanceRunScope());
+    // A sibling key of `ai`: the non-secret end of a Claude sign-in, so lists
+    // can show it without reading the credential.
+    const claudeConfig = (existing: Record<string, unknown> = {}) => {
+      if (input.provider !== "anthropic" || input.method !== "subscription") return existing;
+      const { aiSignInEndsAt: _ended, ...rest } = existing;
       const endsAt = claudeSignInEndsAt(verifiedCredential);
-      return { ...rest, ...(scope === "full" ? { aiClaudeRunScope: "full" } : {}), ...(endsAt ? { aiSignInEndsAt: new Date(endsAt).toISOString() } : {}) };
+      return { ...rest, ...(endsAt ? { aiSignInEndsAt: new Date(endsAt).toISOString() } : {}) };
     };
     if (!(await membership(companyId, userId)))
       throw forbidden("An active company member must own this connection");
@@ -1167,6 +1157,17 @@ export function aiConnectionService(db: Db) {
         // database commit. Save its working replacement instead of revoking it.
         recovered = await recoverQuotaCredentialInTransaction(tx as unknown as Db, { connection, grant }, value) !== null;
         if (recovered) return;
+        const renewable = metadata.data.provider === "anthropic" && metadata.data.method === "subscription" ? parseStoredClaudeOauth(value) : null;
+        if (renewable) {
+          // A renewable Claude login is not shown to need sign-in by one run's
+          // rejected access token: that token may simply have expired under a
+          // long run. Mark it spent, so the next use renews it; only the
+          // provider refusing that renewal requests sign-in.
+          if (renewable.expiresAt > 0) {
+            await secretService(tx).rotate(ref.secretId, { value: JSON.stringify({ claudeAiOauth: { ...renewable, expiresAt: 0 } }), preserveAiSessionEpoch: true }, { userId: grant.subjectUserId });
+          }
+          return;
+        }
         await tx.update(connectionGrants).set({ status: "needs_reauthorization", updatedAt: new Date() })
           .where(eq(connectionGrants.id, grant.id));
         await tx.update(toolConnections).set({ healthStatus: "error", healthMessage: "Sign in again to restore this AI connection.", updatedAt: new Date() })

@@ -7,7 +7,7 @@ export interface AgentConfigurationWarning {
 // Only obsolete tuning/features belong here. Permission, filesystem, network,
 // command and credential settings must retain their existing validation.
 // `chrome` is not listed: Paperclip Runner honors it for a Claude subscription
-// connection whose owner chose full scope, and leaves it without effect otherwise.
+// connection while the instance enables full run scope, and ignores it otherwise.
 const CLAUDE_IGNORED_OPTIONS = {
   maxTurnsPerRun: "Max turns per run",
   warmHandleIdleMs: "Warm handle idle timeout",

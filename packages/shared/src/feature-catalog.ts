@@ -409,6 +409,14 @@ export const INSTANCE_FEATURE_CATALOG: Record<InstanceFeatureKey, FeatureCatalog
     cloudDefault: false,
     selfHostedDefault: false,
   },
+  enableClaudeFullRunScope: {
+    title: "Claude subscription full run scope",
+    description:
+      "Give Claude subscription runs an access token with every scope of the owner's claude.ai sign-in instead of an inference-only token. Claude in Chrome requires it. The token is readable by the agent process for up to eight hours. Sign in again on existing Claude connections after turning this on.",
+    tier: "managed",
+    cloudDefault: false,
+    selfHostedDefault: false,
+  },
   enableSandboxDuplexBridge: {
     title: "Sandbox Duplex Bridge",
     description:

@@ -15,32 +15,11 @@ const REFRESH_TIMEOUT_MS = 60_000;
 
 /**
  * What a run may receive. `inference` is the default: the login is narrowed to
- * `user:inference` before execution. `full` is an explicit per-connection choice
- * that keeps the scopes granted at sign-in, which Claude in Chrome requires.
+ * `user:inference` before execution. `full` applies while the instance setting
+ * `enableClaudeFullRunScope` is on and keeps the scopes granted at sign-in,
+ * which Claude in Chrome requires.
  */
 export type ClaudeRunScope = "inference" | "full";
-
-/** The instance operator's setting, read from the server environment at start. */
-export const CLAUDE_RUN_SCOPE_ENV = "PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE";
-
-/**
- * Full run scope exists only on an instance whose operator set
- * PAPERCLIP_CLAUDE_SUBSCRIPTION_RUN_SCOPE=full. There it is also the default
- * for new Claude subscription sign-ins. Anything else is `inference`.
- */
-export function claudeInstanceRunScope(env: NodeJS.ProcessEnv = process.env): ClaudeRunScope {
-  return env[CLAUDE_RUN_SCOPE_ENV]?.trim().toLowerCase() === "full" ? "full" : "inference";
-}
-
-/**
- * The run scope in effect for a connection: `full` only when the connection
- * saved that choice and the instance still allows it. An operator who removes
- * the setting returns every connection to the inference-only default.
- */
-export function claudeConnectionRunScope(config: unknown, env: NodeJS.ProcessEnv = process.env): ClaudeRunScope {
-  return claudeInstanceRunScope(env) === "full" && config && typeof config === "object"
-    && (config as Record<string, unknown>).aiClaudeRunScope === "full" ? "full" : "inference";
-}
 
 export interface StoredClaudeOauth {
   accessToken: string;
@@ -104,8 +83,8 @@ export function claudeRefreshDue(stored: StoredClaudeOauth, now = Date.now(), ma
 }
 
 /**
- * The scopes a full-scope connection declares to the run beside its access
- * token. Null for an inference connection, a plain token, or a document that
+ * The scopes declared to the run beside its access token while full run scope
+ * is on. Null for an inference connection, a plain token, or a document that
  * was already narrowed: those runs keep the CLI's inference-only default.
  */
 export function claudeRunScopesOf(raw: string, runScope: ClaudeRunScope): string[] | null {
@@ -139,7 +118,7 @@ export async function refreshClaudeOauth(
   stored: StoredClaudeOauth,
   options: { fetchImpl?: typeof fetch; now?: () => number; runScope?: ClaudeRunScope } = {},
 ): Promise<string> {
-  // A full-scope connection renews with the scopes it was granted. Without them
+  // With full run scope the login renews with the scopes it was granted. Without them
   // it cannot ask for more than inference, so it narrows like any other login.
   const requested = options.runScope === "full" && stored.scopes?.length ? stored.scopes : ["user:inference"];
   const fetchImpl = options.fetchImpl ?? fetch;

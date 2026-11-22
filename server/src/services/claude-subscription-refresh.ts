@@ -6,7 +6,8 @@ import { unprocessable } from "../errors.js";
 import { aiConnectionConfigurationFailure } from "./ai-connection-configuration-failure.js";
 import { logActivity } from "./activity-log.js";
 import { secretService } from "./secrets.js";
-import { CLAUDE_REFRESH_FORCE_MS, CLAUDE_REFRESH_MARGIN_MS, claudeAccessTokenOf, claudeConnectionRunScope, claudeRefreshDue, claudeScopesAllowRun, ClaudeOauthRefreshError, parseStoredClaudeOauth, refreshClaudeOauth } from "./claude-oauth-credential.js";
+import { instanceSettingsService } from "./instance-settings.js";
+import { CLAUDE_REFRESH_FORCE_MS, CLAUDE_REFRESH_MARGIN_MS, claudeAccessTokenOf, claudeRefreshDue, claudeScopesAllowRun, ClaudeOauthRefreshError, parseStoredClaudeOauth, refreshClaudeOauth, type ClaudeRunScope } from "./claude-oauth-credential.js";
 
 type Replacement = { value: string; base: string; secretId: string; epoch: number; version: number };
 // One pending obligation per grant. No timer or secondary credential store.
@@ -24,7 +25,8 @@ export async function refreshClaudeSubscription(
   options: { currentRunId?: string } = {},
 ): Promise<string> {
   const companyId = row.connection.companyId;
-  const runScope = claudeConnectionRunScope(row.connection.config);
+  // An instance setting, read once per resolution: a change applies to the next run.
+  const runScope: ClaudeRunScope = (await instanceSettingsService(db).getExperimental()).enableClaudeFullRunScope ? "full" : "inference";
   const due = (stored: Parameters<typeof claudeRefreshDue>[0]) => claudeRefreshDue(stored, Date.now(), CLAUDE_REFRESH_MARGIN_MS, runScope);
   return withAccountHomeSecretMutationLock(undefined, companyId, async () => {
     // Retain a successful exchange across a failed commit. Never exchange the

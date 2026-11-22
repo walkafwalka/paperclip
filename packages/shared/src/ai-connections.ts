@@ -201,8 +201,6 @@ export interface AiManagedConnectionSummary {
   canSetDefault?: boolean;
   status: "connected" | "needs_attention" | "expired" | "revoked";
   unavailableReason?: string;
-  /** Present only for a Claude subscription whose runs keep the sign-in's full scopes. */
-  claudeRunScope?: "full";
   /** When the provider ends this sign-in, if known. The owner reconnects before then. */
   signInEndsAt?: string;
   usageProbeSupported?: boolean;
@@ -272,9 +270,6 @@ export const aiConnectionLoginIntentSchema = z
     connectionId: z.string().uuid().optional(),
     agentIds: z.array(z.string().uuid()).max(1000).default([]),
     allAgents: z.boolean().default(false),
-    // Claude subscription only. `full` keeps the scopes granted at sign-in for
-    // this connection's runs; omitted keeps the connection's saved choice.
-    claudeRunScope: z.enum(["inference", "full"]).optional(),
   })
   .strict();
 export type AiConnectionLoginIntent = z.infer<

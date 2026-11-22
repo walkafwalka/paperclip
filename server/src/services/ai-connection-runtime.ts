@@ -27,7 +27,8 @@ import { runAdapterExecutionTargetProcess } from "@paperclipai/adapter-utils/exe
 import { decideGrokAuthMerge } from "@paperclipai/adapter-grok-local/server";
 import { NativeEnvironmentProbeCleanupError, sanitizeAntigravityCredential } from "../vendor/paperclip-runner/index.js";
 import { readLocalAiCredentialFile } from "./local-ai-credential-file.js";
-import { claudeAccessTokenOf, claudeConnectionRunScope, claudeRunScopesOf } from "./claude-oauth-credential.js";
+import { claudeAccessTokenOf, claudeRunScopesOf } from "./claude-oauth-credential.js";
+import { instanceSettingsService } from "./instance-settings.js";
 import { prepareAntigravityCredentialWriteback } from "./native-runtime/antigravity-runner-credentials.js";
 import { quotaCredentialHash, quotaCredentialRecovery, RetiredCredentialRecoveryError } from "./quota-credential-recovery.js";
 import { bindRetainedAiCredentialHome, reconcileRetainedAiCleanup, retainAiCredentialCleanup } from "./retained-ai-credential-cleanup.js";
@@ -347,8 +348,8 @@ export async function prepareManagedAiRuntime(
     // provider settings only when they are part of the configured task
     // environment, so the caller adds these to that projection.
     const configuredEnvironment: Record<string, string> = {};
-    if (claudeSubscription && claudeConnectionRunScope(selection.connection.config) === "full") {
-      // The owner chose full scope for this connection. The run still receives
+    if (claudeSubscription && (await instanceSettingsService(db).getExperimental()).enableClaudeFullRunScope) {
+      // The instance enabled full run scope. The run still receives
       // only the access token; an env token is read as inference-only unless
       // its scopes are declared beside it. The refresh token stays in the vault.
       const stored = await service.credentialRaw(selection);
