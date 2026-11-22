@@ -173,6 +173,57 @@ format. The discarded refresh token cannot be recovered from a bare access token
 Reconnect an affected connection once to obtain a renewable credential. An
 unexpired long-lived setup token needs no change.
 
+### Renewal waits for running work
+
+The provider revokes the previous access token as soon as it issues a new one,
+and a running Claude process cannot replace the token it started with. An early
+renewal therefore waits while another run of the same grant is `running`: the
+new run receives the current token, which is still valid. The server renews when
+no other run holds the token, both when a run starts and when a run's runtime is
+cleaned up, so a busy connection is renewed in the gap after its last run ends.
+Once less than five minutes remain, renewal no longer waits; the other runs would
+lose the token at expiry either way. A run that outlasts the token it started
+with still fails with an authentication error and can be retried.
+
+### Full run scope (opt-in)
+
+By default a Claude subscription run receives a token narrowed to
+`user:inference`, as described above. The connection owner can instead choose
+full run scope when signing in or reconnecting, by sending
+`claudeRunScope: "full"` with the local sign-in intent. The choice is saved on
+the connection as `aiClaudeRunScope` and is retained by later reconnects until
+the owner sends `claudeRunScope: "inference"`. No existing connection changes.
+
+A full-scope connection is renewed with the scopes granted at sign-in and is
+never narrowed. Its runs still receive only the access token through
+`CLAUDE_CODE_OAUTH_TOKEN`; the refresh token never leaves the vault and no
+credential file is written to the run's home. Because Claude Code treats a token
+from the environment as inference-only, the server declares the token's scopes
+beside it in `CLAUDE_CODE_OAUTH_SCOPES`. It also sets
+`ENABLE_CLAUDEAI_MCP_SERVERS=false` unless the agent's environment sets that
+variable, so the account's own claude.ai connectors are not loaded into agents.
+
+Claude in Chrome requires a claude.ai login with `user:profile`; Claude Code
+keeps it off for API keys and inference-only tokens. With a full-scope
+connection, an agent whose configuration sets `chrome: true` is started with
+`CLAUDE_CODE_ENABLE_CFC=1`. On any
+other connection `chrome` has no effect on Paperclip Runner.
+
+Security: the access token of a full-scope connection carries every scope of the
+owner's claude.ai sign-in for up to its eight-hour lifetime, and it is present in
+the environment of the agent process. An agent, or anything that can read that
+process's environment, can use it for those scopes until it is renewed or
+expires. Choose full scope only for agents trusted with the account. The
+refresh token is not exposed, so the exposure ends with the access token.
+
+### Sign-in end
+
+A claude.ai login ends on a date fixed at sign-in; renewals do not move it. The
+server saves that date on the connection as `aiSignInEndsAt` (never the
+credential) and returns it as `signInEndsAt`. The connection page shows a notice
+with the existing Reconnect action from seven days before the end. After the end
+the provider refuses renewal and the connection requests sign-in as above.
+
 ## Storage and API
 
 AI connections pair `connectionPurpose: ai` with `transport: runtime_auth`.
