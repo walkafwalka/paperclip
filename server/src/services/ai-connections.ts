@@ -1,4 +1,4 @@
-import { claudeAccessTokenOf } from "./claude-oauth-credential.js";
+import { claudeAccessTokenOf, claudeConnectionRunScope, claudeSignInEndsAt } from "./claude-oauth-credential.js";
 import { refreshClaudeSubscription } from "./claude-subscription-refresh.js";
 import { notifyLoginSessionChanged } from "./login-cleanup-notifications.js";
 import type { ConnectionManagementContext } from "./connection-management.js";
@@ -156,6 +156,10 @@ export function aiConnectionService(db: Db) {
           name: connection.name,
           accountLabel: grant.providerTenant?.name,
           ...(needsReconnect ? { unavailableReason: "Reconnect with a separate sign-in to protect your existing terminal login." } : {}),
+          ...(metadata.data.provider === "anthropic" && metadata.data.method === "subscription" ? {
+            ...(claudeConnectionRunScope(connection.config) === "full" ? { claudeRunScope: "full" as const } : {}),
+            ...(typeof connection.config.aiSignInEndsAt === "string" ? { signInEndsAt: connection.config.aiSignInEndsAt } : {}),
+          } : {}),
           ownership:
             grant.kind === "user" ? ("personal" as const) : ("shared" as const),
           ownerUserId: grant.subjectUserId ?? undefined,
@@ -623,12 +627,12 @@ export function aiConnectionService(db: Db) {
     }
     return value;
   }
-  async function credential(row: Parameters<typeof credentialRaw>[0], retry = 0, audit?: Parameters<typeof credentialRaw>[2]): Promise<string> {
+  async function credential(row: Parameters<typeof credentialRaw>[0], retry = 0, audit?: Parameters<typeof credentialRaw>[2], options: { currentRunId?: string } = {}): Promise<string> {
     const metadata = aiConnectionMetadataSchema.parse(row.connection.config.ai);
     if (metadata.provider !== "anthropic" || metadata.method !== "subscription") return credentialRaw(row, retry, audit);
     // Resolve under the credential lock too: resolution records lastResolvedAt,
     // so concurrent pre-lock reads would contend with the rotating writer.
-    return refreshClaudeSubscription(db, row, (tx, selected) => aiConnectionService(tx).credentialRaw(selected, retry, audit));
+    return refreshClaudeSubscription(db, row, (tx, selected) => aiConnectionService(tx).credentialRaw(selected, retry, audit), options);
   }
   async function save(
     companyId: string,
@@ -642,6 +646,18 @@ export function aiConnectionService(db: Db) {
   ) {
     await managementContext?.reauthorize();
     const routing = "routing" in input ? input.routing : undefined;
+    const claudeSubscription = input.provider === "anthropic" && input.method === "subscription";
+    const claudeRunScope = "claudeRunScope" in input ? input.claudeRunScope : undefined;
+    if (claudeRunScope && !claudeSubscription) throw unprocessable("Run scope applies only to a Claude subscription sign-in");
+    // Sibling keys of `ai`: the owner's explicit run scope, and the non-secret
+    // end of the sign-in so lists can show it without reading the credential.
+    const claudeConfig = (existing: Record<string, unknown> = {}) => {
+      if (!claudeSubscription) return existing;
+      const { aiClaudeRunScope: savedScope, aiSignInEndsAt: _ended, ...rest } = existing;
+      const scope = claudeRunScope ?? (savedScope === "full" ? "full" : "inference");
+      const endsAt = claudeSignInEndsAt(verifiedCredential);
+      return { ...rest, ...(scope === "full" ? { aiClaudeRunScope: "full" } : {}), ...(endsAt ? { aiSignInEndsAt: new Date(endsAt).toISOString() } : {}) };
+    };
     if (!(await membership(companyId, userId)))
       throw forbidden("An active company member must own this connection");
     const reconnect = input.connectionId
@@ -836,7 +852,7 @@ export function aiConnectionService(db: Db) {
             status: "active",
             healthStatus: "ok",
             healthMessage: null,
-            config: { ...reconnect.connection.config, aiIsolatedSubscription: input.method === "subscription" && input.provider !== "anthropic" },
+            config: { ...claudeConfig(reconnect.connection.config), aiIsolatedSubscription: input.method === "subscription" && input.provider !== "anthropic" },
             updatedAt: new Date(),
           })
           .where(eq(toolConnections.id, id));
@@ -858,6 +874,7 @@ export function aiConnectionService(db: Db) {
             enabled: true,
             healthStatus: "ok",
             config: {
+              ...claudeConfig(),
               sourceTemplateKey: source,
               ai: { provider: input.provider, method: input.method, ...(routing ? { routing } : {}) },
               aiIsolatedSubscription: input.method === "subscription" && input.provider !== "anthropic",
@@ -1035,9 +1052,9 @@ export function aiConnectionService(db: Db) {
     return pending.value;
   }
 
-  async function runtimeCredential(row: Parameters<typeof credential>[0]) {
+  async function runtimeCredential(row: Parameters<typeof credential>[0], options: { currentRunId?: string } = {}) {
     const metadata = aiConnectionMetadataSchema.safeParse(row.connection.config.ai);
-    if (!metadata.success || !["openai", "google"].includes(metadata.data.provider) || metadata.data.method !== "subscription") return credential(row);
+    if (!metadata.success || !["openai", "google"].includes(metadata.data.provider) || metadata.data.method !== "subscription") return credential(row, 0, undefined, options);
     if (!(await quotaCredentialRecovery(row.connection.companyId, row.grant.id).read())) return credential(row);
     let savingReplacement = false;
     return withAccountHomeSecretMutationLock(undefined, row.connection.companyId, async () => {

@@ -27,6 +27,7 @@ import { runAdapterExecutionTargetProcess } from "@paperclipai/adapter-utils/exe
 import { decideGrokAuthMerge } from "@paperclipai/adapter-grok-local/server";
 import { NativeEnvironmentProbeCleanupError, sanitizeAntigravityCredential } from "../vendor/paperclip-runner/index.js";
 import { readLocalAiCredentialFile } from "./local-ai-credential-file.js";
+import { claudeAccessTokenOf, claudeConnectionRunScope, claudeRunScopesOf } from "./claude-oauth-credential.js";
 import { prepareAntigravityCredentialWriteback } from "./native-runtime/antigravity-runner-credentials.js";
 import { quotaCredentialHash, quotaCredentialRecovery, RetiredCredentialRecoveryError } from "./quota-credential-recovery.js";
 import { bindRetainedAiCredentialHome, reconcileRetainedAiCleanup, retainAiCredentialCleanup } from "./retained-ai-credential-cleanup.js";
@@ -222,6 +223,8 @@ export async function prepareManagedAiRuntime(
     allowUninstalledShared?: boolean;
     allowLegacyValidation?: boolean;
     config: Record<string, unknown>;
+    /** The run this runtime is prepared for, so its own token never defers a Claude renewal. */
+    currentRunId?: string;
   },
 ) {
   const configuredEnv =
@@ -297,7 +300,7 @@ export async function prepareManagedAiRuntime(
       // against a concurrent reconnect or explicit rotation.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const before = await readFreshness();
-        const value = await service.runtimeCredential(selection);
+        const value = await service.runtimeCredential(selection, { currentRunId: input.currentRunId });
         const after = await readFreshness();
         if (before && after && before.version === after.version && before.epoch === after.epoch) {
           return { value, freshness: after };
@@ -339,6 +342,21 @@ export async function prepareManagedAiRuntime(
       );
     if (!routing && subscriptionFile && !antigravitySubscription) await writeFile(authFile, value, { mode: 0o600 });
     else if (!routing && !subscriptionFile) env[capability.envKey] = value;
+    const claudeSubscription = !routing && input.binding.provider === "anthropic" && selection.attribution.method === "subscription";
+    if (claudeSubscription && claudeConnectionRunScope(selection.connection.config) === "full") {
+      // The owner chose full scope for this connection. The run still receives
+      // only the access token; an env token is read as inference-only unless
+      // its scopes are declared beside it. The refresh token stays in the vault.
+      const stored = await service.credentialRaw(selection);
+      const scopes = claudeAccessTokenOf(stored) === value ? claudeRunScopesOf(stored, "full") : null;
+      if (scopes?.length) {
+        env.CLAUDE_CODE_OAUTH_SCOPES = scopes.join(" ");
+        if (input.config.chrome === true) env.CLAUDE_CODE_ENABLE_CFC = "1";
+        // A full login also carries the account's claude.ai connectors. Agents
+        // use the tools Paperclip assigns unless the agent explicitly opts in.
+        if (configuredEnv.ENABLE_CLAUDEAI_MCP_SERVERS === undefined) env.ENABLE_CLAUDEAI_MCP_SERVERS = "false";
+      }
+    }
     if (
       !routing && input.binding.provider === "openai" && harness === "codex_local" &&
       selection.attribution.method === "api_key"
@@ -555,6 +573,9 @@ export async function prepareManagedAiRuntime(
           // recovery handoff must own the refresh before deleting its home.
           removalOnly = true;
           await removeHome();
+          // This run no longer holds the token. If no other run does, renew a
+          // token that is close to expiry now instead of under the next run.
+          if (claudeSubscription) void service.runtimeCredential(selection, { currentRunId: input.currentRunId }).catch(() => undefined);
         } catch (error) {
           if (!durableGoogleRefresh && !removalOnly) throw error;
           // Once native retirement and encrypted fsync transfer ownership, the
