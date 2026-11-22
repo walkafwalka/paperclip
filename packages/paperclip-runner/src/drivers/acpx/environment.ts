@@ -22,13 +22,6 @@ export const CLAUDE_TODO_TOOLS_ENV = "CLAUDE_CODE_ENABLE_TODO_TOOLS";
 export const CLAUDE_CRON_DISABLE_ENV = "CLAUDE_CODE_DISABLE_CRON";
 export const CLAUDE_ROUTING_ENV_KEYS =["ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_USE_BEDROCK", "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_EC2_METADATA_DISABLED", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"] as const;
 
-/**
- * Set by the controller beside CLAUDE_CODE_OAUTH_TOKEN for a connection whose
- * owner chose full scope: the token's declared scopes, the Chrome switch, and
- * the claude.ai connector opt-out. Never credentials themselves.
- */
-export const CLAUDE_FULL_SCOPE_ENV_KEYS = ["CLAUDE_CODE_OAUTH_SCOPES", "CLAUDE_CODE_ENABLE_CFC", "ENABLE_CLAUDEAI_MCP_SERVERS"] as const;
-
 /** Keep the task projection consistent when excluding general IAM from Pi. */
 function removePiIamCredentials(environment: NodeJS.ProcessEnv): void {
   const names = configuredEnvironmentKeys(environment);
@@ -156,7 +149,6 @@ export function createSanitizedAcpxSpawnInput(
     ...(environment === undefined ? [] : ["PAPERCLIP_AGENT_KEY_ID", "PAPERCLIP_AGENT_PUBLIC_KEY", "PAPERCLIP_AGENT_PRIVATE_KEY"]),
     ...credentialNames,
     ...(agent === "claude" ? CLAUDE_ROUTING_ENV_KEYS : []),
-    ...(agent === "claude" && environment !== undefined ? CLAUDE_FULL_SCOPE_ENV_KEYS : []),
     // The environment owner supplies helper paths, not a replacement provider executable.
     ...(agent === "claude" && environment !== undefined ? ["MCP_TOOL_TIMEOUT"] : []),
     ...(agent === "claude" && environment?.PAPERCLIP_GITHUB_LAUNCHER_DIR?.trim()

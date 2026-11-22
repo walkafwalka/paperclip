@@ -253,6 +253,9 @@ describe("Claude subscription full run scope and idle renewal", () => {
     try {
       expect(plain.config.env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: "old-access", CLAUDE_CODE_OAUTH_SCOPES: broadScopes.join(" "), ENABLE_CLAUDEAI_MCP_SERVERS: "false" });
       expect(plain.config.env).not.toHaveProperty("CLAUDE_CODE_ENABLE_CFC");
+      // The same settings are returned for the Runner's configured-environment projection.
+      expect(plain.configuredEnvironment).toEqual({ CLAUDE_CODE_OAUTH_SCOPES: broadScopes.join(" "), ENABLE_CLAUDEAI_MCP_SERVERS: "false" });
+      expect(chrome.configuredEnvironment).toEqual({ CLAUDE_CODE_OAUTH_SCOPES: broadScopes.join(" "), CLAUDE_CODE_ENABLE_CFC: "1" });
       expect(chrome.config.env).toMatchObject({ CLAUDE_CODE_OAUTH_SCOPES: broadScopes.join(" "), CLAUDE_CODE_ENABLE_CFC: "1", ENABLE_CLAUDEAI_MCP_SERVERS: "true" });
       // The run never receives the refresh token or a credential file.
       expect(JSON.stringify(chrome.config.env)).not.toContain("old-refresh");
@@ -268,6 +271,7 @@ describe("Claude subscription full run scope and idle renewal", () => {
     try {
       expect(run.config.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("old-access");
       for (const key of ["CLAUDE_CODE_OAUTH_SCOPES", "CLAUDE_CODE_ENABLE_CFC", "ENABLE_CLAUDEAI_MCP_SERVERS"]) expect(run.config.env).not.toHaveProperty(key);
+      expect(run.configuredEnvironment).toEqual({});
     } finally { await run.cleanup(); }
   });
 

@@ -343,6 +343,10 @@ export async function prepareManagedAiRuntime(
     if (!routing && subscriptionFile && !antigravitySubscription) await writeFile(authFile, value, { mode: 0o600 });
     else if (!routing && !subscriptionFile) env[capability.envKey] = value;
     const claudeSubscription = !routing && input.binding.provider === "anthropic" && selection.attribution.method === "subscription";
+    // Non-secret run settings this connection adds. Paperclip Runner forwards
+    // provider settings only when they are part of the configured task
+    // environment, so the caller adds these to that projection.
+    const configuredEnvironment: Record<string, string> = {};
     if (claudeSubscription && claudeConnectionRunScope(selection.connection.config) === "full") {
       // The owner chose full scope for this connection. The run still receives
       // only the access token; an env token is read as inference-only unless
@@ -350,11 +354,12 @@ export async function prepareManagedAiRuntime(
       const stored = await service.credentialRaw(selection);
       const scopes = claudeAccessTokenOf(stored) === value ? claudeRunScopesOf(stored, "full") : null;
       if (scopes?.length) {
-        env.CLAUDE_CODE_OAUTH_SCOPES = scopes.join(" ");
-        if (input.config.chrome === true) env.CLAUDE_CODE_ENABLE_CFC = "1";
+        configuredEnvironment.CLAUDE_CODE_OAUTH_SCOPES = scopes.join(" ");
+        if (input.config.chrome === true) configuredEnvironment.CLAUDE_CODE_ENABLE_CFC = "1";
         // A full login also carries the account's claude.ai connectors. Agents
         // use the tools Paperclip assigns unless the agent explicitly opts in.
-        if (configuredEnv.ENABLE_CLAUDEAI_MCP_SERVERS === undefined) env.ENABLE_CLAUDEAI_MCP_SERVERS = "false";
+        if (configuredEnv.ENABLE_CLAUDEAI_MCP_SERVERS === undefined) configuredEnvironment.ENABLE_CLAUDEAI_MCP_SERVERS = "false";
+        Object.assign(env, configuredEnvironment);
       }
     }
     if (
@@ -615,6 +620,7 @@ export async function prepareManagedAiRuntime(
       accountName: selection.connection.name,
       accountOwnerUserId: selection.grant.subjectUserId,
       identity,
+      configuredEnvironment,
       home,
       cleanup: cleanupRuntime,
     };

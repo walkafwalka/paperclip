@@ -22,17 +22,6 @@ describe("ACPX launch environment", () => {
     expect(createSanitizedAcpxSpawnInput(host, "codex").env[CLAUDE_CRON_DISABLE_ENV]).toBeUndefined();
   });
 
-  it("passes a full-scope Claude token's declared scopes and Chrome switch from the controller, and only to Claude", () => {
-    const task = { PATH: "/bin", CLAUDE_CODE_OAUTH_TOKEN: "token", CLAUDE_CODE_OAUTH_SCOPES: "user:profile user:inference", CLAUDE_CODE_ENABLE_CFC: "1", ENABLE_CLAUDEAI_MCP_SERVERS: "false" };
-    expect(createSanitizedAcpxSpawnInput(task, "claude").env).toMatchObject(task);
-    const codex = createSanitizedAcpxSpawnInput(task, "codex").env;
-    for (const key of ["CLAUDE_CODE_OAUTH_SCOPES", "CLAUDE_CODE_ENABLE_CFC", "ENABLE_CLAUDEAI_MCP_SERVERS"]) expect(codex[key]).toBeUndefined();
-    // Ambient host values are not a controller choice.
-    for (const [key, value] of Object.entries(task)) vi.stubEnv(key, value);
-    const ambient = createSanitizedAcpxSpawnInput(undefined, "claude").env;
-    for (const key of ["CLAUDE_CODE_OAUTH_SCOPES", "CLAUDE_CODE_ENABLE_CFC", "ENABLE_CLAUDEAI_MCP_SERVERS"]) expect(ambient[key]).toBeUndefined();
-  });
-
   it("rejects task shell selectors without a controller-owned helper projection", () => {
     const selectors = { BASH_ENV: "/workspace/hook.sh", ZDOTDIR: "/workspace", GH_CONFIG_DIR: "/workspace/gh" };
     expect(createSanitizedAcpxSpawnInput(selectors, "claude").env).toEqual(claudeLauncherEnv);
