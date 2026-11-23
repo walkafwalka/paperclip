@@ -197,9 +197,12 @@ By default a Claude subscription run receives a token narrowed to
 Turning it on changes delivery from the next run: a login that still holds the
 scopes of its sign-in is delivered and renewed with them. A login that was
 already narrowed stays inference-only until its owner uses Reconnect, so turn
-the setting on first and then sign in or reconnect. Turning it off narrows each
-login at its next renewal; turning it on again needs a Reconnect. Runs already
-in progress keep the token they started with either way.
+the setting on first and then sign in or reconnect. Turning it on does not
+renew a login, so runs already in progress keep their token. Turning it off
+narrows each login at its next use, without waiting for running work: the
+provider then revokes the full-scope token, and runs that still hold it fail
+with an authentication error and can be retried. Turning it on again needs a
+Reconnect.
 
 With the setting on, a login is renewed with the scopes granted at sign-in and
 is never narrowed. Its runs still receive only the access token through

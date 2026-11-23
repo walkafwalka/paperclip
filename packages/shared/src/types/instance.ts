@@ -160,7 +160,8 @@ export interface InstanceExperimentalSettings {
    * Claude subscription runs receive an access token with the scopes granted
    * at sign-in instead of one narrowed to `user:inference`. Claude in Chrome
    * requires it. Default off. Turning it off narrows each stored login at its
-   * next renewal; that login needs a new sign-in to become full again.
+   * next use, which ends runs that still hold the full token; that login needs
+   * a new sign-in to become full again.
    */
   enableClaudeFullRunScope: boolean;
   /**
