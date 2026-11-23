@@ -7,6 +7,7 @@ import {
   budgetPolicies,
   companies,
   companyMemberships,
+  connectionGrants,
   decisionBundles,
   decisionRetention,
   decisionTriage,
@@ -22,6 +23,8 @@ import {
   issues,
   joinRequests,
   projects,
+  toolApplications,
+  toolConnections,
   type Db,
 } from "@paperclipai/db";
 import { seedIssueReadVisibilityFixture } from "./issue-read-visibility-fixture.js";
@@ -66,6 +69,13 @@ export async function seedAttentionSummaryFixture(db: Db) {
     { id: foreignErroredAgentId, companyId: foreignCompanyId, name: "Foreign errored", role: "engineer", adapterType: "process",
       status: "error", errorReason: "No credentials" },
   ]);
+  // A Claude sign-in that ends in two days: a card for its owner only.
+  const [application] = await db.insert(toolApplications).values({ companyId, applicationKey: `claude-${randomUUID()}`,
+    name: "Claude", type: "mcp_http", status: "active" }).returning();
+  const [connection] = await db.insert(toolConnections).values({ companyId, applicationId: application!.id, name: "Claude subscription",
+    uid: `claude-${randomUUID()}`, connectionPurpose: "ai", transport: "runtime_auth", status: "active", enabled: true,
+    config: { aiSignInEndsAt: new Date(now + 2 * DAY_MS).toISOString() } }).returning();
+  await db.insert(connectionGrants).values({ companyId, connectionId: connection!.id, kind: "user", subjectUserId: users.owner, status: "active" });
   // No default decision owner: a card without an owner waits in Unassigned.
   await db.update(companies).set({ budgetOwnerUserId: users.owner }).where(eq(companies.id, companyId));
   await db.update(projects).set({ decisionOwnerUserId: users.operator }).where(eq(projects.id, visibility.openProjectId));

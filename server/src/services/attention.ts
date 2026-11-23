@@ -11,6 +11,7 @@ import {
   assets,
   companies,
   companyMemberships,
+  connectionGrants,
   decisionBundles,
   decisionQueueItems,
   decisionQueues,
@@ -31,6 +32,7 @@ import {
   documents,
   projects,
   projectWorkspaces,
+  toolConnections,
 } from "@paperclipai/db";
 import { ATTENTION_CLAIMABLE_SOURCE_KINDS, ATTENTION_PERSONAL_VIEWS, RESPONSIBILITY_DASHBOARD_ORIGIN_KIND, deriveProjectUrlKey } from "@paperclipai/shared";
 import { normalizedContentHash } from "@paperclipai/shared/portability-hash";
@@ -68,6 +70,7 @@ import { withoutSqlStatementText } from "@paperclipai/shared";
 import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { listAttentionExhaustedRuns } from "./attention-exhausted-runs.js";
 import { budgetService } from "./budgets.js";
+import { CLAUDE_SIGN_IN_NOTICE_MS, CLAUDE_SIGN_IN_URGENT_MS } from "./claude-oauth-credential.js";
 import {
   BLOCKER_ATTENTION_MAX_DEPTH,
   BLOCKER_ATTENTION_MAX_NODES,
@@ -103,6 +106,7 @@ const ATTENTION_SOURCE_KINDS: AttentionSourceKind[] = [
   "failed_run",
   "budget_alert",
   "agent_error_alert",
+  "ai_sign_in_alert",
 ];
 
 const SEVERITY_RANK: Record<AttentionSeverity, number> = {
@@ -118,12 +122,13 @@ const SOURCE_RANK: Record<AttentionSourceKind, number> = {
   blocker_attention: 2,
   budget_alert: 3,
   agent_error_alert: 4,
-  approval: 5,
-  decision: 6,
-  issue_thread_interaction: 7,
-  review: 8,
-  productivity_review: 9,
-  join_request: 10,
+  ai_sign_in_alert: 5,
+  approval: 6,
+  decision: 7,
+  issue_thread_interaction: 8,
+  review: 9,
+  productivity_review: 10,
+  join_request: 11,
 };
 
 const PENDING_INTERACTION_STATUSES = ["pending"] as const;
@@ -2688,6 +2693,88 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
         });
       }
 
+      // A claude.ai sign-in ends on a date that renewals do not move, and only
+      // a person can sign in again. Tell the connection's owner ahead of time.
+      const signIns = await db
+        .select({
+          id: toolConnections.id,
+          name: toolConnections.name,
+          endsAt: sql<string | null>`${toolConnections.config}->>'aiSignInEndsAt'`,
+          ownerUserId: connectionGrants.subjectUserId,
+          createdByUserId: connectionGrants.createdByUserId,
+          grantStatus: connectionGrants.status,
+          createdAt: toolConnections.createdAt,
+        })
+        .from(toolConnections)
+        .innerJoin(connectionGrants, and(
+          eq(connectionGrants.companyId, toolConnections.companyId),
+          eq(connectionGrants.connectionId, toolConnections.id),
+        ))
+        .where(and(
+          eq(toolConnections.companyId, companyId),
+          eq(toolConnections.connectionPurpose, "ai"),
+          eq(toolConnections.status, "active"),
+          // A refused renewal marks the grant for sign-in. The card must stay then.
+          inArray(connectionGrants.status, ["active", "needs_reauthorization"]),
+          sql`${toolConnections.config}->>'aiSignInEndsAt' is not null`,
+        ))
+        // One card per connection: a personal grant names the owner before a shared one.
+        .orderBy(sql`${connectionGrants.kind} = 'user' desc`, asc(connectionGrants.createdAt));
+      const seenSignIns = new Set<string>();
+
+      for (const signIn of signIns) {
+        if (seenSignIns.has(signIn.id)) continue;
+        seenSignIns.add(signIn.id);
+        const endsAt = signIn.endsAt ? Date.parse(signIn.endsAt) : NaN;
+        const needsSignIn = signIn.grantStatus === "needs_reauthorization";
+        if (!Number.isFinite(endsAt) || (endsAt - now > CLAUDE_SIGN_IN_NOTICE_MS && !needsSignIn)) continue;
+        const ended = needsSignIn || endsAt <= now;
+        const urgent = ended || endsAt - now <= CLAUDE_SIGN_IN_URGENT_MS;
+        // The same day count as the notice on the connection page.
+        const days = Math.floor((endsAt - now) / 86_400_000);
+        const whyNow = ended
+          ? "This sign-in has ended. Agents that use it cannot run until someone signs in again."
+          : `This sign-in ends ${days < 1 ? "today" : days === 1 ? "in 1 day" : `in ${days} days`}. Sign in again before then to keep its agents running.`;
+        // A shared connection has no subject user. Only its creator can reconnect it.
+        const addresseeUserId = signIn.ownerUserId ?? signIn.createdByUserId;
+        const noticeStart = new Date(endsAt - CLAUDE_SIGN_IN_NOTICE_MS);
+        add(createItem({
+          companyId,
+          sourceKind: "ai_sign_in_alert",
+          subject: {
+            kind: "connection",
+            id: signIn.id,
+            companyId,
+            title: signIn.name,
+            identifier: null,
+            status: ended ? "ended" : "ending",
+            href: `/${prefix}/apps/${signIn.id}/permissions`,
+            metadata: { signInEndsAt: signIn.endsAt },
+          },
+          whyNow,
+          decisionVerbs: decisionVerbs(
+            { id: "inspect", label: "Reconnect", description: "Open the connection and sign in again." },
+          ),
+          inlineResolvable: false,
+          entryRule: "The connection's claude.ai sign-in ends within seven days or has ended.",
+          exitRule: "Someone signs in again, the connection is removed, or the row is dismissed.",
+          dedupKey: `ai_sign_in:${signIn.id}`,
+          severity: urgent ? "high" : "medium",
+          activityAt: toIso(noticeStart),
+          createdAt: toIso(signIn.createdAt),
+          updatedAt: toIso(noticeStart),
+          relatedIssue: null,
+          detail: null,
+        }), addresseeUserId
+          ? { issueId: null, addresseeUserId }
+          : { issueId: null, companyScoped: true }, {
+          // An archived or snoozed card returns when the sign-in turns urgent,
+          // when it ends, and again for the next sign-in.
+          content: { signInEndsAt: signIn.endsAt, urgent, ended },
+          since: noticeStart,
+        });
+      }
+
       }
 
       const providerTasks = new Set(collected.flatMap(item => item.providerLimit && item.relatedIssue ? [item.relatedIssue.id] : []));
@@ -3235,6 +3322,7 @@ const WITHDRAW_UNSUPPORTED_TEXT: Partial<Record<AttentionSourceKind, string>> = 
   recovery_action: "Cancel this recovery on its task, where you also choose the task's next status.",
   failed_run: "A failed run is not a request. Retry the task, or archive the card for yourself.",
   agent_error_alert: "Fix the agent on its page, or archive the alert for yourself.",
+  ai_sign_in_alert: "Sign in again on the connection page, or archive the alert for yourself.",
   review: "Approve the review or request changes, or archive the card for yourself.",
   blocker_attention: "Unblock the task on its page, or archive the card for yourself.",
   join_request: "Approve or reject the join request, or archive the card for yourself.",

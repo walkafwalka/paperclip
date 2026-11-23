@@ -18,6 +18,7 @@ import {
   issueWorkProducts,
   issues,
   joinRequests,
+  toolConnections,
 } from "@paperclipai/db";
 import type {
   AttentionItem,
@@ -283,6 +284,13 @@ async function sourceIssueId(
         .then((rows) => rows[0] ?? null);
       return { exists: Boolean(row), issueId: null };
     }
+    case "ai_sign_in_alert": {
+      const row = await db.select({ id: toolConnections.id })
+        .from(toolConnections)
+        .where(and(eq(toolConnections.companyId, companyId), eq(toolConnections.id, sourceId)))
+        .then((rows) => rows[0] ?? null);
+      return { exists: Boolean(row), issueId: null };
+    }
     case "budget_alert": {
       const row = await db.select({ id: budgetIncidents.id })
         .from(budgetIncidents)
@@ -300,6 +308,10 @@ export async function canReadDecisionSource(
   sourceKind: AttentionSourceKind,
   sourceId: string,
 ) {
+  // A sign-in alert is a personal notice to the one person who can sign in
+  // again. It takes that person's own archive and snooze only: shared
+  // retention, triage and queues would let another member hide it.
+  if (sourceKind === "ai_sign_in_alert") return false;
   const source = await sourceIssueId(db, companyId, sourceKind, sourceId);
   if (!source.exists) return false;
   const authz = authorizationService(db);

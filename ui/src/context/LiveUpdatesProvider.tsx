@@ -1631,6 +1631,8 @@ function invalidateActivityQueries(
 
   if (action?.startsWith("ai_connection.") || action?.startsWith("connection_grant.")) {
     queryClient.invalidateQueries({ queryKey: ["ai-connections", companyId] });
+    // A reconnect removes the sign-in card from the Inbox.
+    if (action?.startsWith("ai_connection.")) queryClient.invalidateQueries({ queryKey: queryKeys.attention(companyId) });
   }
 
   if (action?.startsWith("primary_agent.") || action?.startsWith("agent.") || action?.startsWith("resource_membership.")) {
