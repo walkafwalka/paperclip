@@ -379,6 +379,18 @@ export function InstanceExperimentalSettings() {
         />
 
         <ExperimentalToggleCard
+          title="Claude subscription full run scope"
+          description="Give Claude subscription runs an access token with every scope of the owner's claude.ai sign-in instead of an inference-only token. Claude in Chrome needs this."
+          footnote="Off by default. While on, an agent process can read that token for up to eight hours. After turning this on, sign in again on each Claude subscription connection."
+          checked={experimentalQuery.data?.enableClaudeFullRunScope === true}
+          onCheckedChange={(checked) => toggleMutation.mutate({ enableClaudeFullRunScope: checked })}
+          disabled={toggleMutation.isPending}
+          settingKey="enableClaudeFullRunScope"
+          managed={managedKeys.enableClaudeFullRunScope}
+          ariaLabel="Toggle Claude subscription full run scope experimental setting"
+        />
+
+        <ExperimentalToggleCard
           title="Combined Inbox + Task List"
           description="In the Classic workspace, fold Inbox into Tasks. One Tasks row carries the unread badge, and a Views menu reaches every personal and organization task view."
           footnote="Coordinator always includes personal views in Tasks. For Classic, turning this off restores its separate Inbox. No data changes."

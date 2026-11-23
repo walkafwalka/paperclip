@@ -228,8 +228,11 @@ refresh token is not exposed, so the exposure ends with the access token.
 A claude.ai login ends on a date fixed at sign-in; renewals do not move it. The
 server saves that date on the connection as `aiSignInEndsAt` (never the
 credential) and returns it as `signInEndsAt`. The connection page shows a notice
-with the existing Reconnect action from seven days before the end. After the end
-the provider refuses renewal and the connection requests sign-in as above.
+with the existing Reconnect action from seven days before the end. Over the same
+seven days the connection's owner has an Inbox card (`ai_sign_in_alert`) that
+opens the connection; it turns high severity in the last three days, and an
+archived or snoozed card returns then. After the end the provider refuses renewal
+and the connection requests sign-in as above.
 
 ## Storage and API
 

@@ -128,6 +128,7 @@ function defaultExperimentalSettings(): InstanceExperimentalSettingsPayload {
     enableOwnerInstanceAdmin: false,
     enableSandboxDuplexBridge: false,
     enableMcpTasks: false,
+    enableClaudeFullRunScope: false,
     enableRunnerPreviewIngress: false,
     enableWorktreeRunExecution: false,
     worktreeRunExecutionActivatedAt: null,

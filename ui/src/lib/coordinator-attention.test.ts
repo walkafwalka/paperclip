@@ -97,6 +97,10 @@ describe("Decision history presentation (PAP-749 task 2e)", () => {
     const agentError = { ...blocker, sourceKind: "agent_error_alert", subject: { id: "a", kind: "agent", title: "Chief of Staff" },
       detail: { kind: "agent_error", agentName: "Chief of Staff", failureReasonExcerpt: null, images: [] } } as unknown as AttentionItem;
     expect(coordinatorCardTitle(agentError)).toBe("Chief of Staff hit an error and needs help");
+    const signIn = { ...blocker, sourceKind: "ai_sign_in_alert", subject: { id: "c", kind: "connection", title: "Claude subscription", status: "ending" },
+      detail: { kind: "generic", summaryExcerpt: "This sign-in ends in 5 days.", images: [] } } as unknown as AttentionItem;
+    expect(coordinatorCardTitle(signIn)).toBe("Sign in to “Claude subscription” again soon");
+    expect(coordinatorCardTitle({ ...signIn, subject: { ...signIn.subject, status: "ended" } })).toBe("Sign in to “Claude subscription” again");
   });
 
   it("shows the task, or names an approval that has no task", () => {
