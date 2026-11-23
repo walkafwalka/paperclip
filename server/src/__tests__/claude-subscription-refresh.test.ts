@@ -10,7 +10,6 @@ import { companies, agents, companyMemberships, companySecrets, connectionGrants
 import { startEmbeddedPostgresTestDatabase } from "@paperclipai/db/test-embedded-postgres";
 import { readAiConnectionConfigurationFailure } from "../services/ai-connection-configuration-failure.js";
 import { aiConnectionService } from "../services/ai-connections.js";
-import { attentionService } from "../services/attention.js";
 import { prepareManagedAiRuntime } from "../services/ai-connection-runtime.js";
 import * as secretModule from "../services/secrets.js";
 import { secretService } from "../services/secrets.js";
@@ -312,27 +311,6 @@ describe("Claude subscription full run scope and idle renewal", () => {
     expect(await read()).toMatchObject({ aiSignInEndsAt: new Date(ends + 86400_000).toISOString() });
     await service.save(companyId, owner, reconnect, "legacy-token");
     expect(await read()).not.toHaveProperty("aiSignInEndsAt");
-  });
-
-  it("puts a card in the owner's inbox from seven days before the sign-in ends, urgent in the last three", async () => {
-    const day = 86400_000;
-    const ends = Date.now() + 20 * day;
-    const { account, owner } = await connect(broad(Date.now() + 28800_000, { refreshTokenExpiresAt: ends }));
-    const card = async (now: number, userId = owner) => (await attentionService(db, { now: () => now }).list(companyId, { userId }))
-      .items.find(item => item.sourceKind === "ai_sign_in_alert" && item.subject.id === account.connectionId);
-    expect(await card(ends - 8 * day)).toBeUndefined();
-    const early = await card(ends - 5 * day);
-    expect(early).toMatchObject({
-      severity: "medium", audience: { kind: "user", userId: owner }, decisionVerbs: [{ id: "inspect", label: "Reconnect" }],
-      subject: { kind: "connection", status: "ending", href: `/CRT/apps/${account.connectionId}/permissions` },
-    });
-    expect(early!.whyNow).toContain("in 5 days");
-    const urgent = await card(ends - 2 * day);
-    expect(urgent).toMatchObject({ severity: "high" });
-    // An archived card returns when the fingerprint changes.
-    expect(urgent!.changeFingerprint).not.toBe(early!.changeFingerprint);
-    expect(await card(ends + 1000)).toMatchObject({ severity: "high", subject: { status: "ended" } });
-    expect(await card(ends - 2 * day, randomUUID())).toBeUndefined();
   });
 
   it("narrows a broad login once the instance setting is turned off", async () => {

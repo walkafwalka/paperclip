@@ -18,7 +18,6 @@ export const ATTENTION_SOURCE_KINDS = [
   "failed_run",
   "budget_alert",
   "agent_error_alert",
-  "ai_sign_in_alert",
 ] as const;
 
 export type AttentionSourceKind = (typeof ATTENTION_SOURCE_KINDS)[number];
@@ -32,8 +31,7 @@ export type AttentionSubjectKind =
   | "recovery_action"
   | "run"
   | "budget_incident"
-  | "agent"
-  | "connection";
+  | "agent";
 
 export type AttentionSeverity = "critical" | "high" | "medium" | "low";
 
@@ -494,7 +492,6 @@ export type AttentionCardKind = "decision" | "problem";
 const ATTENTION_PROBLEM_SOURCE_KINDS: ReadonlySet<AttentionSourceKind> = new Set([
   "failed_run",
   "agent_error_alert",
-  "ai_sign_in_alert",
   "budget_alert",
   "blocker_attention",
   "recovery_action",
@@ -559,7 +556,6 @@ export function attentionCardType(item: Pick<AttentionItem, "sourceKind" | "subj
     case "failed_run":
     case "agent_error_alert": return "failed_run";
     case "budget_alert": return "budget_stop";
-    case "ai_sign_in_alert": return "connect_service";
     case "recovery_action": return "recovery";
     default: return "confirm";
   }

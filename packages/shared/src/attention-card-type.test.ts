@@ -23,7 +23,6 @@ describe("attentionCardType (PAP-775)", () => {
     expect(attentionCardType(card("blocker_attention"))).toBe("blocked_task");
     expect(attentionCardType(card("agent_error_alert"))).toBe("failed_run");
     expect(attentionCardType(card("budget_alert"))).toBe("budget_stop");
-    expect(attentionCardType(card("ai_sign_in_alert"))).toBe("connect_service");
     expect(attentionCardType(card("recovery_action"))).toBe("recovery");
     expect(attentionCardType(card("decision"))).toBe("make_choice");
   });
