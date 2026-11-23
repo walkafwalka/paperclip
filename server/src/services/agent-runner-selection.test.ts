@@ -865,14 +865,14 @@ describe("Claude runner defaults", () => {
     expect(resolveNewAgentRunner({ ...saved, runner: "legacy" })).toEqual({ adapterType: "claude_local", adapterConfig: { model: "custom", dangerouslySkipPermissions: true } });
     expect(() => resolveNewAgentRunner({ ...saved, runner: "legacy", adapterConfig: { ...saved.adapterConfig, acpxPermissionMode: "deny-all" } })).toThrow("cannot honor");
   });
-  it("retains Claude chrome on conversion and native saves without a warning", () => {
+  it("retains Claude chrome on conversion and native saves and states when it takes effect", () => {
     for (const adapterType of ["claude_local", "paperclip_runner"]) {
       const onConfigurationWarnings = vi.fn();
       const result = resolveNewAgentRunner({ adapterType, target: mac, runner: "paperclip",
         adapterConfig: { provider: "acpx", acpxAgent: "claude", model: "claude-opus-5-5", chrome: true }, onConfigurationWarnings });
       expect(result.adapterType).toBe("paperclip_runner");
       expect(result.adapterConfig).toMatchObject({ chrome: true });
-      expect(onConfigurationWarnings).toHaveBeenCalledWith([]);
+      expect(onConfigurationWarnings).toHaveBeenCalledWith([expect.objectContaining({ code: "runner_option_conditional", field: "chrome" })]);
     }
   });
   it.each(["maxTurnsPerRun", "warmHandleIdleMs", "acpWarmHandleIdleMs"])("warns and ignores obsolete Claude %s on conversion and native saves", field => {
