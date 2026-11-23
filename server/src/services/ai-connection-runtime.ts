@@ -27,6 +27,8 @@ import { runAdapterExecutionTargetProcess } from "@paperclipai/adapter-utils/exe
 import { decideGrokAuthMerge } from "@paperclipai/adapter-grok-local/server";
 import { NativeEnvironmentProbeCleanupError, sanitizeAntigravityCredential } from "../vendor/paperclip-runner/index.js";
 import { readLocalAiCredentialFile } from "./local-ai-credential-file.js";
+import { claudeAccessTokenOf, claudeRunScopesOf } from "./claude-oauth-credential.js";
+import { instanceSettingsService } from "./instance-settings.js";
 import { prepareAntigravityCredentialWriteback } from "./native-runtime/antigravity-runner-credentials.js";
 import { quotaCredentialHash, quotaCredentialRecovery, RetiredCredentialRecoveryError } from "./quota-credential-recovery.js";
 import { bindRetainedAiCredentialHome, reconcileRetainedAiCleanup, retainAiCredentialCleanup } from "./retained-ai-credential-cleanup.js";
@@ -352,6 +354,25 @@ export async function prepareManagedAiRuntime(
     if (!routing && subscriptionFile && !antigravitySubscription) await writeFile(authFile, value, { mode: 0o600 });
     else if (!routing && !subscriptionFile) env[capability.envKey] = value;
     const claudeSubscription = !routing && input.binding.provider === "anthropic" && selection.attribution.method === "subscription";
+    // Non-secret run settings this connection adds. Paperclip Runner forwards
+    // provider settings only when they are part of the configured task
+    // environment, so the caller adds these to that projection.
+    const configuredEnvironment: Record<string, string> = {};
+    if (claudeSubscription && (await instanceSettingsService(db).getExperimental()).enableClaudeFullRunScope) {
+      // The instance enabled full run scope. The run still receives
+      // only the access token; an env token is read as inference-only unless
+      // its scopes are declared beside it. The refresh token stays in the vault.
+      const stored = await service.credentialRaw(selection);
+      const scopes = claudeAccessTokenOf(stored) === value ? claudeRunScopesOf(stored, "full") : null;
+      if (scopes?.length) {
+        configuredEnvironment.CLAUDE_CODE_OAUTH_SCOPES = scopes.join(" ");
+        if (input.config.chrome === true) configuredEnvironment.CLAUDE_CODE_ENABLE_CFC = "1";
+        // A full login also carries the account's claude.ai connectors. Agents
+        // use the tools Paperclip assigns unless the agent explicitly opts in.
+        if (configuredEnv.ENABLE_CLAUDEAI_MCP_SERVERS === undefined) configuredEnvironment.ENABLE_CLAUDEAI_MCP_SERVERS = "false";
+        Object.assign(env, configuredEnvironment);
+      }
+    }
     if (
       !routing && input.binding.provider === "openai" && harness === "codex_local" &&
       selection.attribution.method === "api_key"
@@ -632,6 +653,7 @@ export async function prepareManagedAiRuntime(
       // The Google account a subscription grant signs in with; the Runner compares only its digest.
       ...(antigravitySubscription && selection.grant.providerTenant?.name ? { accountEmail: selection.grant.providerTenant.name } : {}),
       identity,
+      configuredEnvironment,
       home,
       cleanup: cleanupRuntime,
     };

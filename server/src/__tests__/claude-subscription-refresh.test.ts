@@ -18,6 +18,7 @@ import { readIdleLocalWork } from "../services/idle-local-work.js";
 import { connectionIntentService } from "../services/connection-intents.js";
 import { recordReplacementRunnerCredential } from "../services/run-ai-credential-holder.js";
 import { NativeEnvironmentProbeCleanupError } from "../vendor/paperclip-runner/index.js";
+import { instanceSettingsService } from "../services/instance-settings.js";
 
 vi.mock("../services/subscription-refresh.js", () => ({ refreshSubscriptionConnection: vi.fn() }));
 let database: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
@@ -295,7 +296,9 @@ describe("Claude subscription renewal through the managed runtime", () => {
   });
 });
 
-describe("Claude subscription idle renewal and sign-in end", () => {
+describe("Claude subscription full run scope and idle renewal", () => {
+  const setFullScope = (enabled: boolean) => instanceSettingsService(db).updateExperimental({ enableClaudeFullRunScope: enabled });
+  afterEach(() => setFullScope(false));
   const broadScopes = ["user:profile", "user:inference", "user:mcp_servers"];
   const broad = (expiresAt: number, extra: Record<string, unknown> = {}) => {
     const login = JSON.parse(document(expiresAt));
@@ -308,6 +311,39 @@ describe("Claude subscription idle renewal and sign-in end", () => {
     await db.insert(heartbeatRuns).values({ id, companyId, agentId, invocationSource: "assignment", status, contextSnapshot: { aiConnection: { grantId } } });
     return id;
   };
+
+  it("delivers the broad token with declared scopes and the Chrome switch while the instance setting is on", async () => {
+    await setFullScope(true);
+    const { account, owner, row, service } = await connect(broad(Date.now() + 28800_000));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network"));
+    const prepare = (config: Record<string, unknown>) => prepareManagedAiRuntime(db, { companyId, agentId, responsibleUserId: owner, adapterType: "paperclip_runner",
+      binding: binding(account), config: { provider: "acpx", acpxAgent: "claude", ...config } });
+    const plain = await prepare({ env: {} });
+    const chrome = await prepare({ chrome: true, env: { ENABLE_CLAUDEAI_MCP_SERVERS: "true" } });
+    try {
+      expect(plain.config.env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: "old-access", CLAUDE_CODE_OAUTH_SCOPES: broadScopes.join(" "), ENABLE_CLAUDEAI_MCP_SERVERS: "false" });
+      expect(plain.config.env).not.toHaveProperty("CLAUDE_CODE_ENABLE_CFC");
+      // The same settings are returned for the Runner's configured-environment projection.
+      expect(plain.configuredEnvironment).toEqual({ CLAUDE_CODE_OAUTH_SCOPES: broadScopes.join(" "), ENABLE_CLAUDEAI_MCP_SERVERS: "false" });
+      expect(chrome.configuredEnvironment).toEqual({ CLAUDE_CODE_OAUTH_SCOPES: broadScopes.join(" "), CLAUDE_CODE_ENABLE_CFC: "1" });
+      expect(chrome.config.env).toMatchObject({ CLAUDE_CODE_OAUTH_SCOPES: broadScopes.join(" "), CLAUDE_CODE_ENABLE_CFC: "1", ENABLE_CLAUDEAI_MCP_SERVERS: "true" });
+      // The run never receives the refresh token or a credential file.
+      expect(JSON.stringify(chrome.config.env)).not.toContain("old-refresh");
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(JSON.parse(await service.credentialRaw(row)).claudeAiOauth.scopes).toEqual(broadScopes);
+    } finally { await plain.cleanup(); await chrome.cleanup(); }
+  });
+
+  it("keeps the default inference-only delivery while the instance setting is off, even with chrome set", async () => {
+    const { account, owner } = await connect(document(Date.now() + 28800_000));
+    const run = await prepareManagedAiRuntime(db, { companyId, agentId, responsibleUserId: owner, adapterType: "paperclip_runner",
+      binding: binding(account), config: { provider: "acpx", acpxAgent: "claude", chrome: true, env: {} } });
+    try {
+      expect(run.config.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("old-access");
+      for (const key of ["CLAUDE_CODE_OAUTH_SCOPES", "CLAUDE_CODE_ENABLE_CFC", "ENABLE_CLAUDEAI_MCP_SERVERS"]) expect(run.config.env).not.toHaveProperty(key);
+      expect(run.configuredEnvironment).toEqual({});
+    } finally { await run.cleanup(); }
+  });
 
   it("saves the sign-in end beside the connection and updates it on reconnect", async () => {
     const ends = Date.now() + 20 * 86400_000;
@@ -333,6 +369,21 @@ describe("Claude subscription idle renewal and sign-in end", () => {
     expect(saved).toBeGreaterThanOrEqual(before + 20 * 86400_000);
     expect(saved).toBeLessThanOrEqual(Date.now() + 20 * 86400_000);
     expect(await read()).toMatchObject({ ai: { provider: "anthropic", method: "subscription" } });
+  });
+
+  it("narrows a broad login once the instance setting is turned off", async () => {
+    await setFullScope(true);
+    const { account, owner, row, service } = await connect(broad(Date.now() + 28800_000));
+    await setFullScope(false);
+    const exchange = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ access_token: "inference-access", refresh_token: "rotated", expires_in: 28800, scope: "user:inference" })));
+    const run = await prepareManagedAiRuntime(db, { companyId, agentId, responsibleUserId: owner, adapterType: "paperclip_runner",
+      binding: binding(account), config: { provider: "acpx", acpxAgent: "claude", chrome: true, env: {} } });
+    try {
+      expect(JSON.parse(exchange.mock.calls[0]![1]!.body as string).scope).toBe("user:inference");
+      expect(run.config.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("inference-access");
+      expect(run.configuredEnvironment).toEqual({});
+      expect(JSON.parse(await service.credentialRaw(row)).claudeAiOauth.scopes).toEqual(["user:inference"]);
+    } finally { await run.cleanup(); }
   });
 
   it("renews instead of requesting sign-in when a run's access token is rejected, and requests sign-in when the renewed token is rejected too", async () => {
@@ -469,8 +520,10 @@ describe("Claude subscription idle renewal and sign-in end", () => {
     await db.update(heartbeatRuns).set({ status: "succeeded" }).where(inArray(heartbeatRuns.id, [replaced, kept]));
   });
 
-  it("defers an early renewal while another run holds the token", async () => {
-    const { service, row, state, account } = await connect(document(Date.now() + 3600_000));
+  it.each(["inference", "full"] as const)("defers an early renewal while another run holds the token (%s)", async runScope => {
+    if (runScope === "full") await setFullScope(true);
+    const value = runScope === "full" ? broad(Date.now() + 3600_000) : document(Date.now() + 3600_000);
+    const { service, row, state, account } = await connect(value);
     const exchange = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ access_token: "renewed", refresh_token: "rotated", expires_in: 28800 })));
     const other = await holdingRun(account.grantId);
     await holdingRun(account.grantId, "queued");
@@ -480,6 +533,7 @@ describe("Claude subscription idle renewal and sign-in end", () => {
     // The run that holds the token does not defer its own renewal, and a finished run defers nothing.
     expect(await service.credential(row, 0, undefined, { currentRunId: other })).toBe("renewed");
     expect(exchange).toHaveBeenCalledOnce();
+    if (runScope === "full") expect(JSON.parse(exchange.mock.calls[0]![1]!.body as string).scope).toBe(broadScopes.join(" "));
   });
 
   it("renews without waiting once the token is about to expire, and when the holder has finished", async () => {

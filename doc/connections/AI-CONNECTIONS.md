@@ -223,6 +223,45 @@ work, so an idle shutdown waits for the save. While a pair is pending, the
 server checks at most every 30 seconds whether its grant is still active, and
 drops the pair when the grant was revoked or its connection was removed.
 
+### Full run scope (opt-in)
+
+By default a Claude subscription run receives a token narrowed to
+`user:inference`, as described above. Full run scope is an instance setting,
+**Claude subscription full run scope** under Settings → Experimental
+(`enableClaudeFullRunScope`), off by default. There is no per-connection choice.
+
+Turning it on changes delivery from the next run: a login that still holds the
+scopes of its sign-in is delivered and renewed with them. A login that was
+already narrowed stays inference-only until its owner uses Reconnect, so turn
+the setting on first and then sign in or reconnect. Turning it on does not
+renew a login, so runs already in progress keep their token. Turning it off
+narrows each login at its next use, without waiting for running work: the
+provider then revokes the full-scope token, and runs that still hold it fail
+with an authentication error and can be retried. Turning it on again needs a
+Reconnect.
+
+With the setting on, a login is renewed with the scopes granted at sign-in and
+is never narrowed. Its runs still receive only the access token through
+`CLAUDE_CODE_OAUTH_TOKEN`; the refresh token never leaves the vault and no
+credential file is written to the run's home. Because Claude Code treats a token
+from the environment as inference-only, the server declares the token's scopes
+beside it in `CLAUDE_CODE_OAUTH_SCOPES`. It also sets
+`ENABLE_CLAUDEAI_MCP_SERVERS=false` unless the agent's environment sets that
+variable, so the account's own claude.ai connectors are not loaded into agents.
+
+Claude in Chrome requires a claude.ai login with `user:profile`; Claude Code
+keeps it off for API keys and inference-only tokens. With the setting on, an
+agent whose configuration sets `chrome: true` is started with
+`CLAUDE_CODE_ENABLE_CFC=1`. With the setting off `chrome` has no effect on
+Paperclip Runner.
+
+Security: with the setting on, the access token carries every scope of the
+owner's claude.ai sign-in for up to its eight-hour lifetime, and it is present in
+the environment of the agent process. An agent, or anything that can read that
+process's environment, can use it for those scopes until it is renewed or
+expires. Turn the setting on only where agents are trusted with the account. The
+refresh token is not exposed, so the exposure ends with the access token.
+
 ### Sign-in end
 
 A claude.ai login ends on a date fixed at sign-in; renewals do not move it. The

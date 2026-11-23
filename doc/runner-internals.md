@@ -220,8 +220,11 @@ native task are separate checks. Thinking effort (`low`, `medium`, `high`,
 `xhigh`, `max`, where supported by the selected model) travels in native input v9.
 The runner requires the provider to acknowledge it before prompting and on resume.
 An ignored setting or unavailable model fails admission; no runner fallback occurs.
-Chrome integration, custom commands/state paths, warm-process controls,
-confinement settings and turn limits require an explicit Legacy choice. Native
+Custom commands/state paths, warm-process controls,
+confinement settings and turn limits require an explicit Legacy choice.
+Chrome integration (`chrome: true`) takes effect only for a Claude subscription
+connection while the instance setting for full run scope is on; see
+[AI connections](connections/AI-CONNECTIONS.md#full-run-scope-opt-in). Native
 forms omit Legacy-only defaults. Native permissions keep their saved policy.
 
 ACPX Claude supports Linux x64 and macOS ARM64/x64 with pinned SDK executables.

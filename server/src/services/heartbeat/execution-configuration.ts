@@ -498,7 +498,10 @@ export async function prepareHeartbeatExecutionConfiguration(db: Db, input: Hear
   return {
     prepared: true as const,
     mergedConfig, configSnapshot, runScopedMentionedSkillKeys, githubSelection, useHostGitHub,
-    resolvedConfig, configuredTaskEnvironment, secretKeys, secretManifest,
+    resolvedConfig, secretKeys, secretManifest,
+    // The managed AI connection can add non-secret provider settings after the
+    // task values were captured; they belong to the same configured projection.
+    configuredTaskEnvironment: { ...configuredTaskEnvironment, ...managedAiRuntime?.configuredEnvironment },
     runtimeSkillEntries, nativeRunnerPreparationSpans, runtimeConfig, agentIdentity, observability,
   };
 }

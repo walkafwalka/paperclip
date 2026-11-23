@@ -103,6 +103,9 @@ export const instanceExperimentalSettingsSchema = z.object({
   enableMcpTasks: z.boolean().default(false),
   // Trusted /swarm for Google Antigravity agents (Antigravity CLI route). Default off.
   enableAntigravitySwarm: z.boolean().default(false),
+  // Claude subscription runs keep the scopes granted at sign-in (needed for
+  // Claude in Chrome). Off: every run token is narrowed to user:inference.
+  enableClaudeFullRunScope: z.boolean().default(false),
   // Deprecated compatibility key. Runner ingress follows enableNativeRunner;
   // this remains accepted so older stored rows and managed configs keep loading.
   enableRunnerPreviewIngress: z.boolean().default(false),

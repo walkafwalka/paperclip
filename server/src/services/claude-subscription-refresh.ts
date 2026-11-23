@@ -12,7 +12,8 @@ import { AI_CREDENTIAL_HOLDER_KEY } from "./run-ai-credential-holder.js";
 import { registerIdleLocalWorkProbe } from "./idle-local-work.js";
 import { claudeRenewalAfterRejection, hasPendingClaudeExchange, pendingClaudeExchanges, type PendingClaudeExchange } from "./claude-pending-exchanges.js";
 import { isTransientLockContention, retryTransientLockContention } from "./transient-lock-contention.js";
-import { CLAUDE_REFRESH_FORCE_MS, CLAUDE_REFRESH_MARGIN_MS, claudeAccessTokenOf, claudeRefreshDue, claudeScopesAllowRun, claudeSignInEndsAt, ClaudeOauthRefreshError, parseStoredClaudeOauth, refreshClaudeOauth } from "./claude-oauth-credential.js";
+import { instanceSettingsService } from "./instance-settings.js";
+import { CLAUDE_REFRESH_FORCE_MS, CLAUDE_REFRESH_MARGIN_MS, claudeAccessTokenOf, claudeRefreshDue, claudeScopesAllowRun, claudeSignInEndsAt, ClaudeOauthRefreshError, parseStoredClaudeOauth, refreshClaudeOauth, type ClaudeRunScope } from "./claude-oauth-credential.js";
 
 type Replacement = PendingClaudeExchange;
 // One pending obligation per grant, kept in `claude-pending-exchanges.ts`. No
@@ -51,6 +52,9 @@ export async function refreshClaudeSubscription(
   options: ClaudeRefreshOptions = {},
 ): Promise<string> {
   const companyId = row.connection.companyId;
+  // An instance setting, read once per resolution: a change applies to the next run.
+  const runScope: ClaudeRunScope = (await instanceSettingsService(db).getExperimental()).enableClaudeFullRunScope ? "full" : "inference";
+  const due = (stored: Parameters<typeof claudeRefreshDue>[0]) => claudeRefreshDue(stored, Date.now(), CLAUDE_REFRESH_MARGIN_MS, runScope);
   return withAccountHomeSecretMutationLock(undefined, companyId, async () => {
     // Retain a successful exchange across a failed commit. Never exchange the
     // same single-use refresh token a second time during a save retry.
@@ -88,12 +92,12 @@ export async function refreshClaudeSubscription(
             replacement = undefined;
           }
           const stored = parseStoredClaudeOauth(current);
-          if (!stored || (!replacement && !claudeRefreshDue(stored))) return { value: current };
+          if (!stored || (!replacement && !due(stored))) return { value: current };
           // The provider revokes the previous access token the moment it issues a
           // new one, and a run cannot replace the token it started with. Renew
           // early only while no other run holds this token; once it is about to
           // expire those runs lose it either way.
-          if (!replacement && claudeScopesAllowRun(stored) && stored.expiresAt - CLAUDE_REFRESH_FORCE_MS > Date.now()) {
+          if (!replacement && claudeScopesAllowRun(stored, runScope) && stored.expiresAt - CLAUDE_REFRESH_FORCE_MS > Date.now()) {
             const [held] = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(
               eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.status, "running"),
               or(sql`${heartbeatRuns.contextSnapshot}->'aiConnection'->>'grantId' = ${grant.id}`,
@@ -105,10 +109,10 @@ export async function refreshClaudeSubscription(
           const recovering = Boolean(replacement);
           let refreshed = replacement?.value;
           if (!refreshed) {
-            try { refreshed = await refreshClaudeOauth(stored); }
+            try { refreshed = await refreshClaudeOauth(stored, { runScope }); }
             catch (error) {
               if (stored.expiresAt > Date.now()) {
-                if (claudeScopesAllowRun(stored)) return { value: current };
+                if (claudeScopesAllowRun(stored, runScope)) return { value: current };
                 throw unprocessable("Claude sign-in could not supply an inference-only token. Retry or reconnect.", { code: "ai_connection_busy" });
               }
               if (!(error instanceof ClaudeOauthRefreshError) || !error.rejected) {
@@ -164,7 +168,7 @@ export async function refreshClaudeSubscription(
         }
         if (result.reauth) throw aiConnectionConfigurationFailure("ai_connection_unavailable", "Sign in again to restore this AI connection.", { connectionId: row.connection.id });
         const credential = parseStoredClaudeOauth(result.value!);
-        if (result.recovered && credential && claudeRefreshDue(credential) && !recheckedRecovery) {
+        if (result.recovered && credential && due(credential) && !recheckedRecovery) {
           // First commit the retained pair. It may have expired during a vault
           // outage; renew its saved refresh token before handing it to a run.
           // One recheck is enough: a newly issued but unusable token fails closed.
@@ -176,7 +180,7 @@ export async function refreshClaudeSubscription(
         if (credential && credential.expiresAt <= Date.now()) {
           throw unprocessable("Claude sign-in expired during preparation. Retry shortly.", { code: "ai_connection_busy" });
         }
-        if (credential && !claudeScopesAllowRun(credential)) {
+        if (credential && !claudeScopesAllowRun(credential, runScope)) {
           // Keep the rotated pair in the vault, but never expose broad permissions.
           throw unprocessable("Claude sign-in could not supply an inference-only token. Retry or reconnect.", { code: "ai_connection_busy" });
         }

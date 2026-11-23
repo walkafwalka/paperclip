@@ -1048,7 +1048,7 @@ describe.skipIf(!support.supported)("heartbeat runtime selection boundary", () =
       mode: "responsible_user" as const, responsibleUserId: "task-owner" };
     input.config.managedAiRuntime = { sessionIdentity: "account:epoch-1", identity: "account:generation-1",
       config: { env: {}, managedAiConnection: { ...attribution, identity: "account:generation-1", sessionIdentity: "account:epoch-1" } },
-      attribution, accountName: "Saved account", accountOwnerUserId: "task-owner", home: instructionRoot, cleanup: async () => {} };
+      attribution, accountName: "Saved account", accountOwnerUserId: "task-owner", configuredEnvironment: {}, home: instructionRoot, cleanup: async () => {} };
     const selected = await selectHeartbeatRuntime(db, input);
     if (!selected.selected || !selected.nativeExecution) throw new Error("Expected native selection");
     expect(selected.nativeExecution.provider.kind).toBe(profile.provider);
@@ -1078,7 +1078,7 @@ describe.skipIf(!support.supported)("heartbeat runtime selection boundary", () =
       config: { env: {}, managedAiConnection: { ...attribution, identity: "fixture-grant:task-owner:generation-1", sessionIdentity: "fixture-grant:task-owner:epoch-1" } },
       attribution,
       accountName: "Saved account",
-      accountOwnerUserId: "task-owner",
+      accountOwnerUserId: "task-owner", configuredEnvironment: {},
       identity: "fixture-grant:task-owner:generation-1",
       home: instructionRoot,
       cleanup: async () => {},
@@ -1105,7 +1105,7 @@ describe.skipIf(!support.supported)("heartbeat runtime selection boundary", () =
       mode: "responsible_user" as const, responsibleUserId: "task-owner" };
     input.config.managedAiRuntime = { sessionIdentity: "account:epoch-1", identity: "account:generation-1",
       config: { env: {}, managedAiConnection: { ...attribution, identity: "account:generation-1", sessionIdentity: "account:epoch-1" } },
-      attribution, accountName: "Saved account", accountOwnerUserId: "task-owner", home: instructionRoot, cleanup: async () => {} };
+      attribution, accountName: "Saved account", accountOwnerUserId: "task-owner", configuredEnvironment: {}, home: instructionRoot, cleanup: async () => {} };
     const selected = await selectHeartbeatRuntime(db, input);
     if (!selected.selected || !selected.nativeExecution) throw new Error("Expected native Claude selection");
     expect(selected.nativeExecution.session.lifecyclePolicy).toEqual({ mode: "warm", idleTimeoutMs: 300_000 });

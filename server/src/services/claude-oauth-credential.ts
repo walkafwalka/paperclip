@@ -11,6 +11,14 @@ export const CLAUDE_REFRESH_MARGIN_MS = 2 * 60 * 60 * 1000;
 export const CLAUDE_REFRESH_FORCE_MS = 5 * 60 * 1000;
 const REFRESH_TIMEOUT_MS = 60_000;
 
+/**
+ * What a run may receive. `inference` is the default: the login is narrowed to
+ * `user:inference` before execution. `full` applies while the instance setting
+ * `enableClaudeFullRunScope` is on and keeps the scopes granted at sign-in,
+ * which Claude in Chrome requires.
+ */
+export type ClaudeRunScope = "inference" | "full";
+
 export interface StoredClaudeOauth {
   accessToken: string;
   refreshToken: string;
@@ -62,13 +70,26 @@ export function claudeAccessTokenOf(raw: string): string {
 }
 
 /** Auth-login credentials remain server-side until narrowed to the run's permission. */
-export function claudeScopesAllowRun(stored: StoredClaudeOauth): boolean {
+export function claudeScopesAllowRun(stored: StoredClaudeOauth, runScope: ClaudeRunScope = "inference"): boolean {
+  if (runScope === "full") return stored.scopes?.includes("user:inference") === true;
   return stored.scopes?.length === 1 && stored.scopes[0] === "user:inference";
 }
 
 /** Renew on use, before expiry or delivery of a broad login token. */
-export function claudeRefreshDue(stored: StoredClaudeOauth, now = Date.now(), marginMs = CLAUDE_REFRESH_MARGIN_MS): boolean {
-  return stored.expiresAt - marginMs <= now || !claudeScopesAllowRun(stored);
+export function claudeRefreshDue(stored: StoredClaudeOauth, now = Date.now(), marginMs = CLAUDE_REFRESH_MARGIN_MS, runScope: ClaudeRunScope = "inference"): boolean {
+  return stored.expiresAt - marginMs <= now || !claudeScopesAllowRun(stored, runScope);
+}
+
+/**
+ * The scopes declared to the run beside its access token while full run scope
+ * is on. Null for an inference connection, a plain token, or a document that
+ * was already narrowed: those runs keep the CLI's inference-only default.
+ */
+export function claudeRunScopesOf(raw: string, runScope: ClaudeRunScope): string[] | null {
+  if (runScope !== "full") return null;
+  const stored = parseStoredClaudeOauth(raw);
+  if (!stored?.scopes || !claudeScopesAllowRun(stored, "full") || claudeScopesAllowRun(stored)) return null;
+  return stored.scopes.filter(scope => /^[a-z0-9_:.-]{1,64}$/i.test(scope));
 }
 
 /** When the provider ends the stored login, or null when the document does not say. */
@@ -96,8 +117,11 @@ export class ClaudeOauthRefreshError extends Error {
  */
 export async function refreshClaudeOauth(
   stored: StoredClaudeOauth,
-  options: { fetchImpl?: typeof fetch; now?: () => number } = {},
+  options: { fetchImpl?: typeof fetch; now?: () => number; runScope?: ClaudeRunScope } = {},
 ): Promise<string> {
+  // With full run scope the login renews with the scopes it was granted. Without them
+  // it cannot ask for more than inference, so it narrows like any other login.
+  const requested = options.runScope === "full" && stored.scopes?.length ? stored.scopes : ["user:inference"];
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? Date.now;
   const post = async (): Promise<Response> => {
@@ -111,7 +135,7 @@ export async function refreshClaudeOauth(
           grant_type: "refresh_token",
           refresh_token: stored.refreshToken,
           client_id: CLAUDE_OAUTH_CLIENT_ID,
-          scope: "user:inference",
+          scope: requested.join(" "),
         }),
       });
     } catch {
@@ -135,7 +159,7 @@ export async function refreshClaudeOauth(
   if (!payload || !nonEmpty(payload.access_token) || typeof payload.expires_in !== "number" || !Number.isFinite(payload.expires_in) || !(payload.expires_in > 0) || payload.expires_in > 400 * 86400) {
     throw new ClaudeOauthRefreshError("Claude token refresh returned an unexpected response", false);
   }
-  const granted = nonEmpty(payload.scope) ? payload.scope.split(/\s+/).filter(Boolean) : ["user:inference"];
+  const granted = nonEmpty(payload.scope) ? payload.scope.split(/\s+/).filter(Boolean) : requested;
   // The provider may restate the login's end. It never moves later than the one saved at sign-in.
   const restated = typeof payload.refresh_token_expires_in === "number" && Number.isFinite(payload.refresh_token_expires_in) && payload.refresh_token_expires_in > 0
     && representableTime(now() + payload.refresh_token_expires_in * 1000)
