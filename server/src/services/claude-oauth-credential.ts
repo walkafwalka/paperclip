@@ -9,6 +9,10 @@ export const CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/toke
 export const CLAUDE_REFRESH_MARGIN_MS = 2 * 60 * 60 * 1000;
 /** Below this remaining lifetime a renewal no longer waits for other runs to finish. */
 export const CLAUDE_REFRESH_FORCE_MS = 5 * 60 * 1000;
+/** Show the sign-in notice this long before the provider ends the login. */
+export const CLAUDE_SIGN_IN_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
+/** From here the notice is urgent. */
+export const CLAUDE_SIGN_IN_URGENT_MS = 3 * 24 * 60 * 60 * 1000;
 const REFRESH_TIMEOUT_MS = 60_000;
 
 export interface StoredClaudeOauth {

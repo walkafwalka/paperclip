@@ -41,6 +41,7 @@ export function needsYouCardLabel(item: AttentionItem): string {
   const type = attentionCardType(item);
   if (type === "board_approval") return APPROVAL_LABELS[String(item.subject.metadata?.type ?? "")] ?? CARD_TYPE_LABELS.board_approval;
   if (type === "failed_run" && item.sourceKind === "agent_error_alert") return "Fix an agent error";
+  if (item.sourceKind === "ai_sign_in_alert") return "Renew a sign-in";
   if (type === "budget_stop" && item.subject.metadata?.thresholdType === "soft") return "Review a budget warning";
   return CARD_TYPE_LABELS[type];
 }

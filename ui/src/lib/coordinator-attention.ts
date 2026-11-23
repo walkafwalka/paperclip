@@ -40,6 +40,9 @@ function coordinatorCardAsk(item: AttentionItem, taskTitle: string | null): stri
     const agent = item.detail?.kind === "agent_error" ? item.detail.agentName ?? title : title;
     return agent ? `${agent} hit an error and needs help` : null;
   }
+  if (item.sourceKind === "ai_sign_in_alert" && title) {
+    return item.subject.status === "ended" ? `Sign in to “${title}” again` : `Sign in to “${title}” again soon`;
+  }
   if (item.sourceKind === "review" && title && title === taskTitle) return `Review “${title}”`;
   // PAP-775 (UI1): approvals and join requests are answered on the card now.
   if (item.sourceKind === "approval" && title && !/^approve\b/i.test(title)) return `Approve “${title}”?`;
