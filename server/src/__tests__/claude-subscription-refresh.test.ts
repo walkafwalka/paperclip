@@ -162,6 +162,27 @@ describe("Claude subscription renewal through the managed runtime", () => {
     expect(JSON.parse(await service.credentialRaw(row)).claudeAiOauth.refreshToken).toBe(reconnect ? "reconnected-refresh" : "pending-refresh");
   });
 
+  it("keeps an exchanged pair when a run that holds the replaced token then reports a rejected token", async () => {
+    const { service, row, owner, account } = await connect(document(Date.now() + 30 * 60_000));
+    const realService = secretModule.secretService;
+    const failingVault = vi.spyOn(secretModule, "secretService").mockImplementation((...args) => ({
+      ...realService(...args), rotate: async () => { throw new Error("vault is temporarily unavailable"); },
+    }));
+    const exchange = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "pending-access", refresh_token: "pending-refresh", expires_in: 28800 })))
+      .mockResolvedValue(new Response("{}", { status: 400 }));
+    await expect(service.credential(row)).rejects.toThrow("vault is temporarily unavailable");
+    failingVault.mockRestore();
+    await service.markAuthenticationFailed({ companyId, runStartedAt: new Date(), attribution: {
+      connectionId: account.connectionId, grantId: account.grantId, provider: "anthropic", method: "subscription", mode: "delegated", responsibleUserId: owner,
+      identity: `${account.grantId}:${owner}:${createHash("sha256").update("old-access").digest("hex").slice(0, 16)}`,
+    } });
+    expect(await aiConnectionService(db).credential(row)).toBe("pending-access");
+    expect(exchange).toHaveBeenCalledOnce();
+    expect((await db.select().from(connectionGrants).where(eq(connectionGrants.id, account.grantId)))[0]!.status).toBe("active");
+    expect(JSON.parse(await service.credentialRaw(row)).claudeAiOauth.refreshToken).toBe("pending-refresh");
+  });
+
   it.each([false, true])("renews an expired retained pair after recovery before starting a run (already saved=%s)", async alreadySaved => {
     const { service, row, secretId, owner, account } = await connect(document(Date.now() - 60_000));
     const realService = secretModule.secretService;

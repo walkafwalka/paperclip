@@ -14,6 +14,8 @@ type Replacement = { value: string; base: string; secretId: string; epoch: numbe
 // A temporary vault outage must not discard a single-use provider exchange.
 const pendingExchanges = new Map<string, Replacement>();
 const pendingKey = (companyId: string, grantId: string) => `${companyId}:${grantId}`;
+/** True while an exchanged pair awaits its vault save. The stored credential must not change under it. */
+export const hasPendingClaudeExchange = (companyId: string, grantId: string) => pendingExchanges.has(pendingKey(companyId, grantId));
 
 type Selection = { connection: typeof toolConnections.$inferSelect; grant: typeof connectionGrants.$inferSelect };
 

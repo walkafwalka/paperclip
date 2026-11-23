@@ -1,5 +1,5 @@
 import { claudeAccessTokenOf, claudeSignInEndsAt, parseStoredClaudeOauth } from "./claude-oauth-credential.js";
-import { refreshClaudeSubscription } from "./claude-subscription-refresh.js";
+import { hasPendingClaudeExchange, refreshClaudeSubscription } from "./claude-subscription-refresh.js";
 import { notifyLoginSessionChanged } from "./login-cleanup-notifications.js";
 import type { ConnectionManagementContext } from "./connection-management.js";
 import { WORKSPACE_RESTORE_LOCK_TIMEOUT_CODE } from "@paperclipai/adapter-utils/workspace-restore-merge";
@@ -1162,8 +1162,10 @@ export function aiConnectionService(db: Db) {
           // A renewable Claude login is not shown to need sign-in by one run's
           // rejected access token: that token may simply have expired under a
           // long run. Mark it spent, so the next use renews it; only the
-          // provider refusing that renewal requests sign-in.
-          if (renewable.expiresAt > 0) {
+          // provider refusing that renewal requests sign-in. An exchanged pair
+          // that still awaits its save already replaces this token: rotating the
+          // secret here would discard that pair and reuse a spent refresh token.
+          if (renewable.expiresAt > 0 && !hasPendingClaudeExchange(input.companyId, grant.id)) {
             await secretService(tx).rotate(ref.secretId, { value: JSON.stringify({ claudeAiOauth: { ...renewable, expiresAt: 0 } }), preserveAiSessionEpoch: true }, { userId: grant.subjectUserId });
           }
           return;
